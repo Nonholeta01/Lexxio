@@ -69,6 +69,7 @@ export default function GamePage() {
   >(null);
   const [armedCards, setArmedCards] = useState<Card[] | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [hasUnreadChat, setHasUnreadChat] = useState(false);
   const [quitting, setQuitting] = useState(false);
   const [chatToast, setChatToast] = useState<{ playerId: string; content: string } | null>(null);
 
@@ -153,7 +154,7 @@ export default function GamePage() {
     fetchMyHand(roomId).then(setMyHand);
   }, [roomId, tableState?.round_number]);
 
-  // ---------- 채팅 새 메시지 → 5초간 말풍선 토스트로 보여줌 (콘솔 안 열어도 보이게) ----------
+  // ---------- 채팅 새 메시지 → 5초간 말풍선 토스트로 보여줌 + 콘솔 닫혀있으면 버튼 점멸 ----------
   useEffect(() => {
     if (chatMessages.length === 0) return;
     const last = chatMessages[chatMessages.length - 1];
@@ -166,6 +167,7 @@ export default function GamePage() {
     if (last.id !== lastChatMessageIdRef.current) {
       lastChatMessageIdRef.current = last.id;
       setChatToast({ playerId: last.sender_id, content: last.content });
+      if (!chatOpen) setHasUnreadChat(true);
     }
   }, [chatMessages]);
 
@@ -491,9 +493,6 @@ export default function GamePage() {
           <IconButton onClick={handlePauseToggle} active={isPaused} label={isPaused ? "재개" : "일시정지"}>
             {isPaused ? "▶" : "⏸"}
           </IconButton>
-          <IconButton onClick={() => setChatOpen((v) => !v)} active={chatOpen} label="채팅">
-            💬
-          </IconButton>
           <a
             href="https://buymeacoffee.com/holicssong"
             target="_blank"
@@ -529,8 +528,82 @@ export default function GamePage() {
           flexDirection: "column",
           justifyContent: "flex-start",
           overflowY: "auto",
+          position: "relative",
         }}
       >
+        {/* 채팅 토글 — 작은 원형 버튼, 누르면 바로 아래에 미니 콘솔처럼 뜸 */}
+        <button
+          onClick={() => {
+            setChatOpen((v) => !v);
+            setHasUnreadChat(false);
+          }}
+          aria-label="채팅"
+          style={{
+            position: "absolute",
+            top: 6,
+            right: 10,
+            width: 32,
+            height: 32,
+            borderRadius: "50%",
+            border: chatOpen ? "1px solid #e0304a" : "1px solid rgba(255,255,255,0.15)",
+            background: chatOpen ? "rgba(224,48,74,0.25)" : "rgba(255,255,255,0.06)",
+            color: "#fff",
+            fontSize: 14,
+            zIndex: 71,
+          }}
+        >
+          💬
+          {hasUnreadChat && !chatOpen && (
+            <span
+              className="lexio-unread-dot"
+              style={{
+                position: "absolute",
+                top: -2,
+                right: -2,
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: "#e0304a",
+                boxShadow: "0 0 6px rgba(224,48,74,0.9)",
+              }}
+            />
+          )}
+        </button>
+
+        {chatOpen && (
+          <div
+            style={{
+              position: "absolute",
+              top: 42,
+              right: 10,
+              width: 210,
+              height: 200,
+              background: "rgba(20,20,24,0.95)",
+              backdropFilter: "blur(6px)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 12,
+              boxShadow: "0 8px 20px rgba(0,0,0,0.5)",
+              zIndex: 70,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.7 }}>채팅</span>
+              <button
+                onClick={() => setChatOpen(false)}
+                style={{ background: "transparent", border: "none", color: "#fff", opacity: 0.5, fontSize: 11 }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <ChatPanel roomId={roomId} compact />
+            </div>
+          </div>
+        )}
+
         {!isPaused && playerCount && (
           <PlayHistoryStrip entries={playLog} playerCount={playerCount} theme={cardTheme} />
         )}
@@ -629,41 +702,6 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* 게임 중 채팅 (토글) */}
-      {/* 게임 중 채팅 (가볍게: 작은 서랍 + 빠른 슬라이드 애니메이션) */}
-      <div
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: "34%",
-          background: "rgba(20,20,24,0.92)",
-          backdropFilter: "blur(6px)",
-          borderTop: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: "14px 14px 0 0",
-          zIndex: 65,
-          display: "flex",
-          flexDirection: "column",
-          transform: chatOpen ? "translateY(0)" : "translateY(100%)",
-          transition: "transform 0.18s ease",
-          pointerEvents: chatOpen ? "auto" : "none",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 12px" }}>
-          <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.8 }}>채팅</span>
-          <button
-            onClick={() => setChatOpen(false)}
-            style={{ background: "transparent", border: "none", color: "#fff", opacity: 0.5, fontSize: 13 }}
-          >
-            ✕
-          </button>
-        </div>
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <ChatPanel roomId={roomId} />
-        </div>
-      </div>
-
       {quitting && (
         <ConfirmModal
           message={
@@ -692,7 +730,10 @@ export default function GamePage() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>라운드 결과</p>
               <button
-                onClick={() => setChatOpen((v) => !v)}
+                onClick={() => {
+                  setChatOpen((v) => !v);
+                  setHasUnreadChat(false);
+                }}
                 style={{
                   padding: "4px 8px",
                   borderRadius: 16,

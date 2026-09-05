@@ -32,3 +32,20 @@
 .lexio-bubble-grow {
   animation: lexioBubbleGrow 0.4s ease-out forwards;
 }
+
+/* 채팅 콘솔이 닫혀있을 때 새 메시지가 오면 버튼이 깜빡깜빡 점멸 */
+@keyframes lexioUnreadBlink {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(1.2);
+  }
+}
+
+.lexio-unread-dot {
+  animation: lexioUnreadBlink 0.9s ease-in-out infinite;
+}

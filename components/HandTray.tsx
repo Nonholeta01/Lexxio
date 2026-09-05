@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import type { Card } from "@/lib/lexioEngine";
 import { cardId } from "@/lib/lexioEngine";
 import LexioCard, { type CardTheme } from "./LexioCard";
@@ -145,7 +146,7 @@ export default function HandTray({
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, padding: "0 12px 12px" }}>
+      <div style={{ display: "flex", gap: 8, padding: "0 56px 12px 12px" }}>
         <button
           onClick={handlePass}
           disabled={disabled}
@@ -207,18 +208,30 @@ function CardRow({
   if (cards.length === 0) return null;
   return (
     <div style={{ display: "flex", gap: ROW_GAP, justifyContent: "center" }}>
-      {hidden
-        ? cards.map((card) => <CardBack key={cardId(card)} theme={theme} widthPx={tileWidth} />)
-        : cards.map((card) => (
-            <LexioCard
+      {hidden ? (
+        cards.map((card) => <CardBack key={cardId(card)} theme={theme} widthPx={tileWidth} />)
+      ) : (
+        <AnimatePresence mode="popLayout">
+          {cards.map((card) => (
+            <motion.div
               key={cardId(card)}
-              card={card}
-              theme={theme}
-              widthPx={tileWidth}
-              selected={selectedIds.has(cardId(card))}
-              onClick={() => onToggle(card)}
-            />
+              layout
+              initial={{ opacity: 0, y: 14, scale: 0.85 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -34, scale: 0.6 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
+            >
+              <LexioCard
+                card={card}
+                theme={theme}
+                widthPx={tileWidth}
+                selected={selectedIds.has(cardId(card))}
+                onClick={() => onToggle(card)}
+              />
+            </motion.div>
           ))}
+        </AnimatePresence>
+      )}
     </div>
   );
 }
