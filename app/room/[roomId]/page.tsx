@@ -7,7 +7,7 @@ import { getRoomPlayers, startRoom, leaveRoom, MAX_ROOM_SEATS } from "@/lib/room
 import ChatPanel from "@/components/ChatPanel";
 import ConfirmModal from "@/components/ConfirmModal";
 import { setMatchOptions, initMatchScores } from "@/lib/matchScoring";
-import { startNewRound, addBot, removePlayer } from "@/lib/gameApi";
+import { startNewRound, addBot, removePlayer, NO_TIME_LIMIT } from "@/lib/gameApi";
 import { updateAvatarIcon } from "@/lib/avatar";
 import { useBadgeHolders } from "@/lib/badges";
 import BadgeRow from "@/components/BadgeRow";
@@ -125,14 +125,15 @@ export default function RoomPage() {
         players.map((p) => p.player.id)
       );
       await startRoom(roomId);
-      // 방장이 즉시 1라운드를 딜 — "3 구름"을 가진 사람이 자동으로 선이 되고, 첫 턴은 60초를 준다
+      // 방장이 즉시 1라운드를 딜 — "3 구름"을 가진 사람이 자동으로 선이 되고,
+      // 첫 턴은 60초를 준다 (단, "제한없음"을 골랐으면 처음부터 무제한)
       await startNewRound(
         roomId,
         actualPlayerCount,
         players.map((p) => ({ seat_no: p.seat_no, player_id: p.player.id })),
         0,
         1,
-        60
+        turnTimeLimit === NO_TIME_LIMIT ? NO_TIME_LIMIT : 60
       );
       router.push(`/game/${roomId}`);
     } catch (e: any) {
@@ -475,9 +476,9 @@ export default function RoomPage() {
 
       {confirming && targetScore && (
         <ConfirmModal
-          message={`${players.length}인용 · 목표점수 ${targetScore}점 · 턴 제한 ${turnTimeLimit}초${
-            applyTwoWeight ? " · 2 가중치 적용" : ""
-          }\n시작할까요?`}
+          message={`${players.length}인용 · 목표점수 ${targetScore}점 · 턴 제한 ${
+            turnTimeLimit === NO_TIME_LIMIT ? "없음" : `${turnTimeLimit}초`
+          }${applyTwoWeight ? " · 2 가중치 적용" : ""}\n시작할까요?`}
           onConfirm={handleConfirmStart}
           onCancel={() => setConfirming(false)}
         />
@@ -575,12 +576,15 @@ function GameOptionsSheet({
 
         {/* 턴 제한시간 */}
         <OptionBlock label="턴 제한시간 (초과 시 자동 패스)">
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {timePresets.map((t) => (
               <PickButton key={t} active={turnTime === t} onClick={() => setTurnTime(t)}>
                 {t}초
               </PickButton>
             ))}
+            <PickButton active={turnTime === NO_TIME_LIMIT} onClick={() => setTurnTime(NO_TIME_LIMIT)}>
+              제한없음
+            </PickButton>
           </div>
         </OptionBlock>
 

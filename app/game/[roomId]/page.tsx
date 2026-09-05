@@ -19,6 +19,7 @@ import {
   botPlayCards,
   botPassTurn,
   getHandCounts,
+  NO_TIME_LIMIT,
   type TableState,
 } from "@/lib/gameApi";
 import { evaluateCombo, canBeat, type Card, type PlayerCount, type HandEval } from "@/lib/lexioEngine";
@@ -307,8 +308,8 @@ export default function GamePage() {
 
   // ---------- 턴 타이머 (초과 시: 확정 대기 중이던 패가 있으면 그걸 제출, 없으면 자동 패스) ----------
   useEffect(() => {
-    if (!tableState?.turn_deadline || tableState.paused_by) {
-      setSecondsLeft(null);
+    if (!tableState?.turn_deadline || tableState.paused_by || turnTimeLimit >= NO_TIME_LIMIT) {
+      setSecondsLeft(null); // "제한없음"이거나 일시정지 중이면 카운트다운 자체를 안 보여줌
       return;
     }
     const deadline = new Date(tableState.turn_deadline).getTime();
@@ -328,7 +329,7 @@ export default function GamePage() {
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [tableState?.turn_deadline, tableState?.current_turn_seat, tableState?.paused_by, armedCards]);
+  }, [tableState?.turn_deadline, tableState?.current_turn_seat, tableState?.paused_by, armedCards, turnTimeLimit]);
 
   // ---------- 봇 턴 자동 실행 (방장 브라우저가 대신 둠) ----------
   const botActingRef = useRef(false);
@@ -548,7 +549,7 @@ export default function GamePage() {
       <div style={{ borderTop: "2px solid #f2c14e" }}>
         {!roundResult && !isPaused && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 16px 6px" }}>
-            <div style={{ fontSize: 22, flexShrink: 0 }}>🧑‍✈️</div>
+            <div style={{ fontSize: 22, flexShrink: 0 }}>🦉</div>
             <div
               key={
                 isMyTurn ? "me" : currentTurnPlayerId() ?? "none"

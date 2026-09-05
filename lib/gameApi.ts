@@ -2,6 +2,9 @@ import { supabase } from "./supabaseClient";
 import type { Card, PlayerCount } from "./lexioEngine";
 import { dealHands, Suit } from "./lexioEngine";
 
+/** "턴 제한시간 없음"을 표현하는 값 — 사실상 무제한이 되도록 아주 큰 초 단위를 씀 */
+export const NO_TIME_LIMIT = 999999;
+
 export interface TableState {
   room_id: string;
   round_number: number;
