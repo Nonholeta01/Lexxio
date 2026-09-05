@@ -54,12 +54,12 @@ export default function PlayerScoreBoard({
               </span>
             )}
           </div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#e0304a" }}>
+          {handCounts && handCounts[s.player_id] !== undefined && (
+            <div style={{ fontSize: 10, opacity: 0.6, marginTop: 1 }}>🀄 잔여 {handCounts[s.player_id]}장</div>
+          )}
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#e0304a", marginTop: 2 }}>
             {s.score} <span style={{ opacity: 0.4, fontSize: 10 }}>/ {targetScore}</span>
           </div>
-          {handCounts && handCounts[s.player_id] !== undefined && (
-            <div style={{ fontSize: 10, opacity: 0.55, marginTop: 1 }}>🀄 {handCounts[s.player_id]}장</div>
-          )}
 
           {toast && toast.playerId === s.player_id && (
             <div

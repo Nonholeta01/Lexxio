@@ -178,7 +178,7 @@ export default function GamePage() {
     if (!tableState) return;
     getHandCounts(roomId)
       .then(setHandCounts)
-      .catch(() => {});
+      .catch((e) => console.error("잔여 패 개수 조회 실패:", e));
   }, [roomId, tableState?.round_number, tableState?.current_combo_player_id, tableState?.current_turn_seat]);
 
   // ---------- 사운드: 새 라운드 딜(촤라락) ----------
