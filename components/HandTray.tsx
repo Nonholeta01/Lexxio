@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence, Reorder } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import type { Card } from "@/lib/lexioEngine";
 import { cardId } from "@/lib/lexioEngine";
 import LexioCard, { type CardTheme } from "./LexioCard";
@@ -334,7 +334,8 @@ function CardRow({
   );
 }
 
-/** "내맘대로" 모드 — 가로 한 줄, 카드를 드래그해서 순서를 직접 바꿀 수 있음 */
+/** "내맘대로" 모드 — 2줄 배치를 유지하면서, 드래그로 놓은 위치(좌표)를 직접 계산해서 그 자리에 끼워 넣음
+ * (framer-motion의 Reorder는 한 줄 기준으로만 계산해서 2줄에서는 위치가 꼬이길래 직접 계산하는 방식으로 교체) */
 function CustomOrderRow({
   cards,
   orderIds,
@@ -354,64 +355,124 @@ function CustomOrderRow({
   selectedIds: Set<string>;
   onToggle: (card: Card) => void;
 }) {
-  // 숫자순/모양순과 똑같이 여러 줄로 자연스럽게 감싸지도록(flex-wrap) 해서, 가로 스크롤 없이도
-  // 항상 2줄 안팎으로 보이게 함 — 같은 tileWidth를 써서 크기도 다른 모드와 일치시킴
-  if (hidden) {
-    return (
-      <div
-        style={{
-          width: "100%",
-          display: "flex",
-          flexWrap: "wrap",
-          justifyContent: "center",
-          alignContent: "center",
-          gap: ROW_GAP,
-          padding: `4px ${ROW_PADDING_X}px`,
-        }}
-      >
-        {cards.map((card) => (
-          <CardBack key={cardId(card)} theme={theme} widthPx={tileWidth} />
-        ))}
-      </div>
-    );
+  const containerRef = useRef<HTMLDivElement>(null);
+  const topCount = Math.ceil(cards.length / 2);
+  const topRow = cards.slice(0, topCount);
+  const bottomRow = cards.slice(topCount);
+
+  function handleDragEnd(card: Card, info: { point: { x: number; y: number } }) {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const relX = info.point.x - rect.left - ROW_PADDING_X;
+    const relY = info.point.y - rect.top;
+
+    const rowHeight = tileWidth / 0.72 + ROW_GAP;
+    const rowIndex = Math.max(0, Math.min(1, Math.floor(relY / rowHeight)));
+
+    const colWidth = tileWidth + ROW_GAP;
+    const rowLength = rowIndex === 0 ? topRow.length : bottomRow.length;
+    const colIndex = Math.max(0, Math.min(rowLength, Math.round(relX / colWidth)));
+
+    const targetFlatIndex = rowIndex === 0 ? colIndex : topCount + colIndex;
+
+    const draggedId = cardId(card);
+    const withoutDragged = orderIds.filter((id) => id !== draggedId);
+    const clampedIndex = Math.max(0, Math.min(withoutDragged.length, targetFlatIndex));
+    const next = [
+      ...withoutDragged.slice(0, clampedIndex),
+      draggedId,
+      ...withoutDragged.slice(clampedIndex),
+    ];
+    onReorder(next);
   }
 
   return (
-    <Reorder.Group
-      as="div"
-      axis="x"
-      values={orderIds}
-      onReorder={onReorder}
+    <div
+      ref={containerRef}
       style={{
         width: "100%",
         display: "flex",
-        flexWrap: "wrap",
-        justifyContent: "center",
-        alignContent: "center",
+        flexDirection: "column",
         gap: ROW_GAP,
         padding: `4px ${ROW_PADDING_X}px`,
-        margin: 0,
-        listStyle: "none",
       }}
     >
-      {cards.map((card) => (
-        <Reorder.Item
-          key={cardId(card)}
-          value={cardId(card)}
-          as="div"
-          style={{ listStyle: "none", flexShrink: 0 }}
-          whileDrag={{ scale: 1.12, zIndex: 5 }}
-        >
-          <LexioCard
-            card={card}
-            theme={theme}
-            widthPx={tileWidth}
-            selected={selectedIds.has(cardId(card))}
-            onClick={() => onToggle(card)}
-          />
-        </Reorder.Item>
-      ))}
-    </Reorder.Group>
+      <div style={{ display: "flex", gap: ROW_GAP, justifyContent: "center" }}>
+        {topRow.map((card) =>
+          hidden ? (
+            <CardBack key={cardId(card)} theme={theme} widthPx={tileWidth} />
+          ) : (
+            <DraggableCard
+              key={cardId(card)}
+              card={card}
+              theme={theme}
+              tileWidth={tileWidth}
+              selected={selectedIds.has(cardId(card))}
+              onToggle={onToggle}
+              onDragEnd={handleDragEnd}
+            />
+          )
+        )}
+      </div>
+      {bottomRow.length > 0 && (
+        <div style={{ display: "flex", gap: ROW_GAP, justifyContent: "center" }}>
+          {bottomRow.map((card) =>
+            hidden ? (
+              <CardBack key={cardId(card)} theme={theme} widthPx={tileWidth} />
+            ) : (
+              <DraggableCard
+                key={cardId(card)}
+                card={card}
+                theme={theme}
+                tileWidth={tileWidth}
+                selected={selectedIds.has(cardId(card))}
+                onToggle={onToggle}
+                onDragEnd={handleDragEnd}
+              />
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 자유롭게 드래그되다가, 놓으면 항상 원래(=업데이트된 정렬 기준) 격자 자리로 부드럽게 스냅됨 */
+function DraggableCard({
+  card,
+  theme,
+  tileWidth,
+  selected,
+  onToggle,
+  onDragEnd,
+}: {
+  card: Card;
+  theme: CardTheme;
+  tileWidth: number;
+  selected: boolean;
+  onToggle: (card: Card) => void;
+  onDragEnd: (card: Card, info: { point: { x: number; y: number } }) => void;
+}) {
+  return (
+    <motion.div
+      layout
+      drag
+      dragMomentum={false}
+      dragElastic={0.12}
+      dragSnapToOrigin
+      whileDrag={{ scale: 1.15, zIndex: 20 }}
+      onDragEnd={(_e, info) => onDragEnd(card, info)}
+      style={{ touchAction: "none" }}
+    >
+      <LexioCard
+        card={card}
+        theme={theme}
+        widthPx={tileWidth}
+        selected={selected}
+        onClick={() => onToggle(card)}
+      />
+    </motion.div>
   );
 }
 
