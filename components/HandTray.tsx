@@ -160,46 +160,50 @@ export default function HandTray({
         </SortButton>
       </div>
 
-      {sortMode === "custom" ? (
-        <CustomOrderRow
-          cards={customSorted}
-          orderIds={customOrderIds}
-          onReorder={setCustomOrderIds}
-          hidden={hidden}
-          theme={theme}
-          selectedIds={selectedIds}
-          onToggle={toggle}
-        />
-      ) : (
-        <div
-          ref={containerRef}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 5,
-            padding: `4px ${ROW_PADDING_X}px 4px`,
-          }}
-        >
-          <CardRow
-            cards={topRow}
+      {/* 모드가 바뀌어도(1줄↔2줄) 전체 높이가 똑같이 유지되도록 고정 — 그래야 아래 버튼들이 안 밀림 */}
+      <div style={{ height: 112, display: "flex", alignItems: "center" }}>
+        {sortMode === "custom" ? (
+          <CustomOrderRow
+            cards={customSorted}
+            orderIds={customOrderIds}
+            onReorder={setCustomOrderIds}
             hidden={hidden}
             theme={theme}
-            tileWidth={tileWidth}
             selectedIds={selectedIds}
             onToggle={toggle}
           />
-          {bottomRow.length > 0 && (
+        ) : (
+          <div
+            ref={containerRef}
+            style={{
+              width: "100%",
+              display: "flex",
+              flexDirection: "column",
+              gap: 5,
+              padding: `4px ${ROW_PADDING_X}px 4px`,
+            }}
+          >
             <CardRow
-              cards={bottomRow}
+              cards={topRow}
               hidden={hidden}
               theme={theme}
               tileWidth={tileWidth}
               selectedIds={selectedIds}
               onToggle={toggle}
             />
-          )}
-        </div>
-      )}
+            {bottomRow.length > 0 && (
+              <CardRow
+                cards={bottomRow}
+                hidden={hidden}
+                theme={theme}
+                tileWidth={tileWidth}
+                selectedIds={selectedIds}
+                onToggle={toggle}
+              />
+            )}
+          </div>
+        )}
+      </div>
 
       <div style={{ display: "flex", gap: 8, padding: "0 56px 12px 12px" }}>
         <button
