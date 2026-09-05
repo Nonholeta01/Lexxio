@@ -1,5 +1,6 @@
 "use client";
 
+import "./chatScroll.css";
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@/lib/chat";
 import { getCurrentProfile } from "@/lib/auth";
@@ -28,6 +29,7 @@ export default function ChatPanel({ roomId, compact = false }: { roomId: string 
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div
         ref={listRef}
+        className="lexio-chat-scroll"
         style={{
           flex: 1,
           overflowY: "auto",

@@ -7,7 +7,6 @@ import { cardId } from "@/lib/lexioEngine";
 import LexioCard, { type CardTheme } from "./LexioCard";
 
 const MAX_TILE_WIDTH = 34; // 넘지 않을 최대 폭(px) — 자리가 부족하면 실측해서 이보다 더 줄임
-const CUSTOM_TILE_WIDTH = 40; // "내맘대로" 모드는 가로 스크롤 한 줄이라 폭을 고정해도 됨
 const ROW_GAP = 4;
 const ROW_PADDING_X = 10; // 좌우 각각
 
@@ -162,6 +161,7 @@ export default function HandTray({
 
       {/* 모드가 바뀌어도(1줄↔2줄) 전체 높이가 똑같이 유지되도록 고정 — 그래야 아래 버튼들이 안 밀림 */}
       <div
+        ref={containerRef}
         style={{
           height: 116,
           minHeight: 116,
@@ -180,12 +180,12 @@ export default function HandTray({
             onReorder={setCustomOrderIds}
             hidden={hidden}
             theme={theme}
+            tileWidth={tileWidth}
             selectedIds={selectedIds}
             onToggle={toggle}
           />
         ) : (
           <div
-            ref={containerRef}
             style={{
               width: "100%",
               display: "flex",
@@ -341,6 +341,7 @@ function CustomOrderRow({
   onReorder,
   hidden,
   theme,
+  tileWidth,
   selectedIds,
   onToggle,
 }: {
@@ -349,17 +350,27 @@ function CustomOrderRow({
   onReorder: (ids: string[]) => void;
   hidden: boolean;
   theme: CardTheme;
+  tileWidth: number;
   selectedIds: Set<string>;
   onToggle: (card: Card) => void;
 }) {
+  // 숫자순/모양순과 똑같이 여러 줄로 자연스럽게 감싸지도록(flex-wrap) 해서, 가로 스크롤 없이도
+  // 항상 2줄 안팎으로 보이게 함 — 같은 tileWidth를 써서 크기도 다른 모드와 일치시킴
   if (hidden) {
     return (
       <div
-        className="lexio-hide-scrollbar"
-        style={{ width: "100%", display: "flex", gap: ROW_GAP, overflowX: "auto", padding: `4px ${ROW_PADDING_X}px` }}
+        style={{
+          width: "100%",
+          display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          alignContent: "center",
+          gap: ROW_GAP,
+          padding: `4px ${ROW_PADDING_X}px`,
+        }}
       >
         {cards.map((card) => (
-          <CardBack key={cardId(card)} theme={theme} widthPx={CUSTOM_TILE_WIDTH} />
+          <CardBack key={cardId(card)} theme={theme} widthPx={tileWidth} />
         ))}
       </div>
     );
@@ -371,12 +382,13 @@ function CustomOrderRow({
       axis="x"
       values={orderIds}
       onReorder={onReorder}
-      className="lexio-hide-scrollbar"
       style={{
         width: "100%",
         display: "flex",
+        flexWrap: "wrap",
+        justifyContent: "center",
+        alignContent: "center",
         gap: ROW_GAP,
-        overflowX: "auto",
         padding: `4px ${ROW_PADDING_X}px`,
         margin: 0,
         listStyle: "none",
@@ -388,12 +400,12 @@ function CustomOrderRow({
           value={cardId(card)}
           as="div"
           style={{ listStyle: "none", flexShrink: 0 }}
-          whileDrag={{ scale: 1.08, zIndex: 5 }}
+          whileDrag={{ scale: 1.12, zIndex: 5 }}
         >
           <LexioCard
             card={card}
             theme={theme}
-            widthPx={CUSTOM_TILE_WIDTH}
+            widthPx={tileWidth}
             selected={selectedIds.has(cardId(card))}
             onClick={() => onToggle(card)}
           />

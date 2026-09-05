@@ -177,7 +177,7 @@ export default function LobbyPage() {
       {/* 하단: 로비 전체 채팅 (소리 버튼과 안 겹치게 아래쪽 여백 확보) */}
       <div
         style={{
-          height: 220,
+          height: "50%",
           borderTop: "1px solid rgba(255,255,255,0.08)",
           paddingBottom: 44,
           boxSizing: "border-box",

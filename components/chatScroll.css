@@ -1,0 +1,18 @@
+/* 기본 브라우저 스크롤바 대신, 지금 UI 톤에 맞는 얇고 은은한 스크롤바 */
+.lexio-chat-scroll {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: rgba(224, 48, 74, 0.35) transparent;
+}
+.lexio-chat-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+.lexio-chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.lexio-chat-scroll::-webkit-scrollbar-thumb {
+  background: rgba(224, 48, 74, 0.35);
+  border-radius: 10px;
+}
+.lexio-chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(224, 48, 74, 0.55);
+}
