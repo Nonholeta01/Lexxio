@@ -31,10 +31,10 @@ export default function ChatPanel({ roomId }: { roomId: string | null }) {
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: "10px 12px",
+          padding: "8px 10px",
           display: "flex",
           flexDirection: "column",
-          gap: 8,
+          gap: 5,
         }}
       >
         {messages.map((m) => {
@@ -49,19 +49,19 @@ export default function ChatPanel({ roomId }: { roomId: string | null }) {
               }}
             >
               {!isMine && (
-                <span style={{ fontSize: 11, opacity: 0.5, marginBottom: 2, marginLeft: 4 }}>
+                <span style={{ fontSize: 10, opacity: 0.45, marginBottom: 1, marginLeft: 4 }}>
                   {m.sender_nickname}
                 </span>
               )}
               <div
                 style={{
                   maxWidth: "78%",
-                  padding: "8px 12px",
-                  borderRadius: isMine ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-                  background: isMine ? "#e0304a" : "rgba(255,255,255,0.1)",
+                  padding: "5px 10px",
+                  borderRadius: isMine ? "12px 12px 3px 12px" : "12px 12px 12px 3px",
+                  background: isMine ? "rgba(224,48,74,0.85)" : "rgba(255,255,255,0.08)",
                   color: "#fff",
-                  fontSize: 13,
-                  lineHeight: 1.4,
+                  fontSize: 12,
+                  lineHeight: 1.35,
                   wordBreak: "break-word",
                 }}
               >

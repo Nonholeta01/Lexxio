@@ -1,5 +1,6 @@
 "use client";
 
+import "../comboEffect.css";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -541,25 +542,50 @@ export default function GamePage() {
               : null
           }
         />
-        {!isMyTurn && !roundResult && !isPaused && (
-          <p style={{ textAlign: "center", fontSize: 13, opacity: 0.5 }}>
-            {currentTurnPlayerId()
-              ? `${seated.find((s) => s.player_id === currentTurnPlayerId())?.nickname}님의 차례...`
-              : ""}
-          </p>
-        )}
       </div>
 
-      <HandTray
-        hand={myHand}
-        theme={cardTheme}
-        disabled={!isMyTurn || isPaused}
-        hidden={isPaused}
-        onPlay={handlePlay}
-        onPass={handlePass}
-        onArmedChange={setArmedCards}
-        secondsLeft={secondsLeft}
-      />
+      {/* 위쪽 게임판과 내 손패 구역을 확실히 나누는 경계선 + 안내원 말풍선 */}
+      <div style={{ borderTop: "2px solid #f2c14e" }}>
+        {!roundResult && !isPaused && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 16px 6px" }}>
+            <div style={{ fontSize: 22, flexShrink: 0 }}>🧑‍✈️</div>
+            <div
+              key={
+                isMyTurn ? "me" : currentTurnPlayerId() ?? "none"
+              } /* 문구가 바뀔 때마다 애니메이션이 처음부터 다시 재생되도록 */
+              className="lexio-bubble-grow"
+              style={{
+                overflow: "hidden",
+                whiteSpace: "nowrap",
+                padding: "8px 14px",
+                borderRadius: "4px 16px 16px 16px",
+                fontWeight: 800,
+                fontSize: 13,
+                background: isMyTurn ? "#f2c14e" : "rgba(255,255,255,0.06)",
+                color: isMyTurn ? "#161616" : "rgba(255,255,255,0.6)",
+                boxShadow: isMyTurn ? "0 0 14px rgba(242,193,78,0.55)" : "none",
+              }}
+            >
+              {isMyTurn
+                ? "▶ 내 차례입니다"
+                : currentTurnPlayerId()
+                ? `${seated.find((s) => s.player_id === currentTurnPlayerId())?.nickname}님의 차례...`
+                : ""}
+            </div>
+          </div>
+        )}
+
+        <HandTray
+          hand={myHand}
+          theme={cardTheme}
+          disabled={!isMyTurn || isPaused}
+          hidden={isPaused}
+          onPlay={handlePlay}
+          onPass={handlePass}
+          onArmedChange={setArmedCards}
+          secondsLeft={secondsLeft}
+        />
+      </div>
 
       {/* 일시정지 팝업 — 전원에게 보이고, 건 사람에게만 재개 버튼 */}
       {isPaused && (
@@ -603,36 +629,39 @@ export default function GamePage() {
       )}
 
       {/* 게임 중 채팅 (토글) */}
-      {chatOpen && (
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: "55%",
-            background: "#111114",
-            borderTop: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: "16px 16px 0 0",
-            zIndex: 65,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px" }}>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>채팅</span>
-            <button
-              onClick={() => setChatOpen(false)}
-              style={{ background: "transparent", border: "none", color: "#fff", opacity: 0.6, fontSize: 14 }}
-            >
-              ✕
-            </button>
-          </div>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <ChatPanel roomId={roomId} />
-          </div>
+      {/* 게임 중 채팅 (가볍게: 작은 서랍 + 빠른 슬라이드 애니메이션) */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: "34%",
+          background: "rgba(20,20,24,0.92)",
+          backdropFilter: "blur(6px)",
+          borderTop: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: "14px 14px 0 0",
+          zIndex: 65,
+          display: "flex",
+          flexDirection: "column",
+          transform: chatOpen ? "translateY(0)" : "translateY(100%)",
+          transition: "transform 0.18s ease",
+          pointerEvents: chatOpen ? "auto" : "none",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 12px" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.8 }}>채팅</span>
+          <button
+            onClick={() => setChatOpen(false)}
+            style={{ background: "transparent", border: "none", color: "#fff", opacity: 0.5, fontSize: 13 }}
+          >
+            ✕
+          </button>
         </div>
-      )}
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <ChatPanel roomId={roomId} />
+        </div>
+      </div>
 
       {quitting && (
         <ConfirmModal

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import type { HandEval } from "@/lib/lexioEngine";
 import { formatCombo } from "@/lib/comboFormat";
 import LexioCard, { type CardTheme } from "./LexioCard";
@@ -13,8 +14,26 @@ export default function CurrentComboBanner({
   theme?: CardTheme;
   hidden?: boolean;
 }) {
+  // 5장 조합(스트레이트~스트레이트플러시)이 새로 나올 때마다 살짝 터지는 이펙트를 재생
+  const [burstKey, setBurstKey] = useState(0);
+  const lastSignatureRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!lastPlay) {
+      lastSignatureRef.current = null;
+      return;
+    }
+    const signature = lastPlay.hand.cards.map((c) => `${c.number}-${c.suit}`).join(",");
+    if (lastPlay.hand.count === 5 && signature !== lastSignatureRef.current) {
+      setBurstKey((k) => k + 1);
+    }
+    lastSignatureRef.current = signature;
+  }, [lastPlay]);
+
   return (
     <div
+      key={burstKey}
+      className={lastPlay && lastPlay.hand.count === 5 ? "lexio-combo-burst" : undefined}
       style={{
         margin: "12px 16px",
         padding: 14,
