@@ -161,7 +161,18 @@ export default function HandTray({
       </div>
 
       {/* 모드가 바뀌어도(1줄↔2줄) 전체 높이가 똑같이 유지되도록 고정 — 그래야 아래 버튼들이 안 밀림 */}
-      <div style={{ height: 112, display: "flex", alignItems: "center" }}>
+      <div
+        style={{
+          height: 116,
+          minHeight: 116,
+          maxHeight: 116,
+          flexShrink: 0,
+          overflow: "hidden",
+          display: "flex",
+          alignItems: "center",
+          width: "100%",
+        }}
+      >
         {sortMode === "custom" ? (
           <CustomOrderRow
             cards={customSorted}
@@ -343,7 +354,10 @@ function CustomOrderRow({
 }) {
   if (hidden) {
     return (
-      <div style={{ display: "flex", gap: ROW_GAP, overflowX: "auto", padding: `4px ${ROW_PADDING_X}px` }}>
+      <div
+        className="lexio-hide-scrollbar"
+        style={{ width: "100%", display: "flex", gap: ROW_GAP, overflowX: "auto", padding: `4px ${ROW_PADDING_X}px` }}
+      >
         {cards.map((card) => (
           <CardBack key={cardId(card)} theme={theme} widthPx={CUSTOM_TILE_WIDTH} />
         ))}
@@ -357,7 +371,9 @@ function CustomOrderRow({
       axis="x"
       values={orderIds}
       onReorder={onReorder}
+      className="lexio-hide-scrollbar"
       style={{
+        width: "100%",
         display: "flex",
         gap: ROW_GAP,
         overflowX: "auto",

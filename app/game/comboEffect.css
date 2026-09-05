@@ -49,3 +49,12 @@
 .lexio-unread-dot {
   animation: lexioUnreadBlink 0.9s ease-in-out infinite;
 }
+
+/* "내맘대로" 손패 줄의 가로 스크롤바를 안 보이게 (깔끔하게) */
+.lexio-hide-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.lexio-hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
