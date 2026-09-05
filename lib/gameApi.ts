@@ -182,3 +182,9 @@ export async function getHandCounts(roomId: string): Promise<Record<string, numb
   });
   return map;
 }
+
+/** 바닥패만으로 "이제 아무도 못 이김"이 확인됐을 때, 곧바로 낸 사람에게 턴을 돌려줌 */
+export async function forceReturnToLeader(roomId: string): Promise<void> {
+  const { error } = await supabase.rpc("force_return_to_leader", { p_room_id: roomId });
+  if (error) throw error;
+}

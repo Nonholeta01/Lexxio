@@ -92,6 +92,40 @@ begin
 end;
 $$ language plpgsql security definer;
 
+-- 바닥패만으로 "이걸 이길 수 있는 패가 이론상 남아있는지"를 클라이언트(방장)가 판정한 뒤,
+-- 없다고 판단되면 이걸 호출해서 곧바로 그 조합을 낸 사람에게 턴을 돌려준다 (모두 패스한 것과 동일 효과)
+create function public.force_return_to_leader(p_room_id uuid)
+returns void as $$
+declare
+  v_host_id uuid;
+  v_combo_player uuid;
+  v_combo_seat int;
+  v_turn_limit int;
+begin
+  select host_id into v_host_id from public.rooms where id = p_room_id;
+  if auth.uid() != v_host_id then raise exception '방장만 처리할 수 있습니다.'; end if;
+
+  select current_combo_player_id into v_combo_player
+  from public.game_table_state where room_id = p_room_id;
+  if v_combo_player is null then
+    return; -- 이미 테이블이 비어있으면(다른 경로로 이미 처리됨) 아무것도 안 함
+  end if;
+
+  select seat_no into v_combo_seat from public.room_players
+  where room_id = p_room_id and player_id = v_combo_player;
+  select turn_time_limit into v_turn_limit from public.rooms where id = p_room_id;
+
+  update public.game_table_state set
+    current_combo = null,
+    current_combo_player_id = null,
+    current_turn_seat = v_combo_seat,
+    passed_seats = '{}',
+    turn_deadline = now() + (v_turn_limit || ' seconds')::interval,
+    updated_at = now()
+  where room_id = p_room_id;
+end;
+$$ language plpgsql security definer;
+
 -- 방장이 사람(강퇴, 다시 들어오는 건 자유) 또는 AI(제거/난이도 변경 전 단계)를 자리에서 내보냄
 create function public.remove_player(p_room_id uuid, p_player_id uuid)
 returns void as $$
@@ -132,7 +166,7 @@ create table public.rooms (
 
 create table public.room_players (
   room_id uuid not null references public.rooms(id) on delete cascade,
-  player_id uuid not null references public.profiles(id),
+  player_id uuid not null references public.profiles(id) on delete cascade,
   seat_no int not null, -- 0-indexed 좌석 순서
   joined_at timestamptz not null default now(),
   primary key (room_id, player_id),
@@ -152,7 +186,7 @@ create table public.games (
 
 create table public.game_results (
   game_id uuid not null references public.games(id) on delete cascade,
-  player_id uuid not null references public.profiles(id),
+  player_id uuid not null references public.profiles(id) on delete cascade,
   rank int not null,        -- 그 판에서의 등수 (1등, 2등 ...)
   score int not null,       -- 그 판에서 획득한 점수
   primary key (game_id, player_id)
@@ -166,7 +200,7 @@ create table public.game_results (
 
 create table public.match_scores (
   room_id uuid not null references public.rooms(id) on delete cascade,
-  player_id uuid not null references public.profiles(id),
+  player_id uuid not null references public.profiles(id) on delete cascade,
   score int not null default 0,
   updated_at timestamptz not null default now(),
   primary key (room_id, player_id)
@@ -207,7 +241,7 @@ $$ language plpgsql security definer;
 create table public.round_score_log (
   id uuid primary key default gen_random_uuid(),
   room_id uuid not null references public.rooms(id) on delete cascade,
-  player_id uuid not null references public.profiles(id),
+  player_id uuid not null references public.profiles(id) on delete cascade,
   delta int not null,
   created_at timestamptz not null default now()
 );
@@ -276,7 +310,7 @@ create index messages_lobby_idx on public.messages (created_at) where room_id is
 
 create table public.player_hands (
   room_id uuid not null references public.rooms(id) on delete cascade,
-  player_id uuid not null references public.profiles(id),
+  player_id uuid not null references public.profiles(id) on delete cascade,
   cards jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now(),
   primary key (room_id, player_id)
@@ -286,12 +320,12 @@ create table public.game_table_state (
   room_id uuid primary key references public.rooms(id) on delete cascade,
   round_number int not null default 1,
   current_combo jsonb,                -- 현재 테이블 위 카드 (null = 새 라운드 첫 턴, 자유롭게 낼 수 있음)
-  current_combo_player_id uuid references public.profiles(id),
+  current_combo_player_id uuid references public.profiles(id) on delete set null,
   current_turn_seat int not null default 0,
   passed_seats int[] not null default '{}',
   turn_deadline timestamptz,
-  round_winner_id uuid references public.profiles(id), -- 패 0장 만든 사람 (null = 라운드 진행중)
-  paused_by uuid references public.profiles(id), -- 일시정지 건 사람 (null = 진행중), 이 사람만 재개 가능
+  round_winner_id uuid references public.profiles(id) on delete set null, -- 패 0장 만든 사람 (null = 라운드 진행중)
+  paused_by uuid references public.profiles(id) on delete set null, -- 일시정지 건 사람 (null = 진행중), 이 사람만 재개 가능
   advance_requested boolean not null default false, -- 라운드 승자가 "다음으로"를 눌러 대기를 건너뛰고 싶을 때
   updated_at timestamptz not null default now()
 );
@@ -723,7 +757,12 @@ $$ language plpgsql security definer;
 create function public.get_hand_counts(p_room_id uuid)
 returns table(player_id uuid, card_count int) as $$
 begin
-  if not exists (select 1 from public.room_players where room_id = p_room_id and player_id = auth.uid()) then
+  -- 주의: RETURNS TABLE의 컬럼명(player_id)이 함수 안에서 변수처럼도 잡히기 때문에,
+  -- room_players.player_id 를 그냥 쓰면 모호해짐 → 반드시 별명(rp)으로 명시해야 함
+  if not exists (
+    select 1 from public.room_players rp
+    where rp.room_id = p_room_id and rp.player_id = auth.uid()
+  ) then
     raise exception '이 방의 참가자가 아닙니다.';
   end if;
 
@@ -756,7 +795,7 @@ create table public.play_log (
   id uuid primary key default gen_random_uuid(),
   room_id uuid not null references public.rooms(id) on delete cascade,
   round_number int not null,
-  player_id uuid not null references public.profiles(id),
+  player_id uuid not null references public.profiles(id) on delete cascade,
   cards jsonb not null,
   created_at timestamptz not null default now()
 );

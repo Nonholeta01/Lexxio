@@ -19,6 +19,7 @@ import {
   botPlayCards,
   botPassTurn,
   getHandCounts,
+  forceReturnToLeader,
   NO_TIME_LIMIT,
   type TableState,
 } from "@/lib/gameApi";
@@ -27,6 +28,7 @@ import { computeRoundScores, type RoundHandResult } from "@/lib/roundScoring";
 import { applyRoundScores, useMatchScores, findMatchWinner } from "@/lib/matchScoring";
 import { finalizeMatch } from "@/lib/matchScoring";
 import { chooseBotMove, type BotDifficulty } from "@/lib/botAI";
+import { isComboUnbeatable } from "@/lib/reachability";
 import { playShuffleSound, playTileClack, playFanfare } from "@/lib/sounds";
 import HandTray from "@/components/HandTray";
 import CurrentComboBanner from "@/components/CurrentComboBanner";
@@ -333,6 +335,30 @@ export default function GamePage() {
     return () => clearInterval(interval);
   }, [tableState?.turn_deadline, tableState?.current_turn_seat, tableState?.paused_by, armedCards, turnTimeLimit]);
 
+  // ---------- 바닥패만으로 "이제 아무도 못 이김"이 확인되면 방장이 곧바로 턴을 돌려줌 ----------
+  const autoSkipCheckedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    autoSkipCheckedForRef.current = null; // 새 라운드 시작하면 체크 기록 초기화
+  }, [tableState?.round_number]);
+
+  useEffect(() => {
+    if (!tableState || !playerCount || myId !== hostId) return;
+    if (!tableState.current_combo || !tableState.current_combo_player_id) return;
+
+    // 같은 콤보에 대해 중복으로 여러 번 처리하지 않도록 (콤보 서명으로 체크)
+    const comboSignature = tableState.current_combo.map((c) => `${c.number}-${c.suit}`).join(",");
+    if (autoSkipCheckedForRef.current === comboSignature) return;
+    autoSkipCheckedForRef.current = comboSignature;
+
+    const currentEval = evaluateCombo(tableState.current_combo, playerCount);
+    if (!currentEval) return;
+
+    const playedThisRound = playLog.flatMap((entry) => entry.cards);
+    if (isComboUnbeatable(currentEval, playedThisRound, playerCount)) {
+      forceReturnToLeader(roomId).catch(() => {});
+    }
+  }, [tableState?.current_combo_player_id, playLog, myId, hostId, playerCount]);
+
   // ---------- 봇 턴 자동 실행 (방장 브라우저가 대신 둠) ----------
   const botActingRef = useRef(false);
   useEffect(() => {
@@ -531,79 +557,6 @@ export default function GamePage() {
           position: "relative",
         }}
       >
-        {/* 채팅 토글 — 작은 원형 버튼, 누르면 바로 아래에 미니 콘솔처럼 뜸 */}
-        <button
-          onClick={() => {
-            setChatOpen((v) => !v);
-            setHasUnreadChat(false);
-          }}
-          aria-label="채팅"
-          style={{
-            position: "absolute",
-            top: 6,
-            right: 10,
-            width: 32,
-            height: 32,
-            borderRadius: "50%",
-            border: chatOpen ? "1px solid #e0304a" : "1px solid rgba(255,255,255,0.15)",
-            background: chatOpen ? "rgba(224,48,74,0.25)" : "rgba(255,255,255,0.06)",
-            color: "#fff",
-            fontSize: 14,
-            zIndex: 71,
-          }}
-        >
-          💬
-          {hasUnreadChat && !chatOpen && (
-            <span
-              className="lexio-unread-dot"
-              style={{
-                position: "absolute",
-                top: -2,
-                right: -2,
-                width: 10,
-                height: 10,
-                borderRadius: "50%",
-                background: "#e0304a",
-                boxShadow: "0 0 6px rgba(224,48,74,0.9)",
-              }}
-            />
-          )}
-        </button>
-
-        {chatOpen && (
-          <div
-            style={{
-              position: "absolute",
-              top: 42,
-              right: 10,
-              width: 210,
-              height: 200,
-              background: "rgba(20,20,24,0.95)",
-              backdropFilter: "blur(6px)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 12,
-              boxShadow: "0 8px 20px rgba(0,0,0,0.5)",
-              zIndex: 70,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px" }}>
-              <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.7 }}>채팅</span>
-              <button
-                onClick={() => setChatOpen(false)}
-                style={{ background: "transparent", border: "none", color: "#fff", opacity: 0.5, fontSize: 11 }}
-              >
-                ✕
-              </button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <ChatPanel roomId={roomId} compact />
-            </div>
-          </div>
-        )}
-
         {!isPaused && playerCount && (
           <PlayHistoryStrip entries={playLog} playerCount={playerCount} theme={cardTheme} />
         )}
@@ -698,6 +651,79 @@ export default function GamePage() {
                 ▶ 재개하기
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 채팅 토글 — 소리 버튼 바로 위에 나란히, 누르면 위쪽으로 미니 콘솔이 펼쳐짐 */}
+      <button
+        onClick={() => {
+          setChatOpen((v) => !v);
+          setHasUnreadChat(false);
+        }}
+        aria-label="채팅"
+        style={{
+          position: "absolute",
+          right: 12,
+          bottom: 60,
+          width: 32,
+          height: 32,
+          borderRadius: "50%",
+          border: chatOpen ? "1px solid #e0304a" : "1px solid rgba(255,255,255,0.15)",
+          background: chatOpen ? "rgba(224,48,74,0.25)" : "rgba(0,0,0,0.5)",
+          color: "#fff",
+          fontSize: 14,
+          zIndex: 71,
+        }}
+      >
+        💬
+        {hasUnreadChat && !chatOpen && (
+          <span
+            className="lexio-unread-dot"
+            style={{
+              position: "absolute",
+              top: -2,
+              right: -2,
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              background: "#e0304a",
+              boxShadow: "0 0 6px rgba(224,48,74,0.9)",
+            }}
+          />
+        )}
+      </button>
+
+      {chatOpen && (
+        <div
+          style={{
+            position: "absolute",
+            right: 12,
+            bottom: 100,
+            width: 210,
+            height: 200,
+            background: "rgba(20,20,24,0.95)",
+            backdropFilter: "blur(6px)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 12,
+            boxShadow: "0 8px 20px rgba(0,0,0,0.5)",
+            zIndex: 70,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px" }}>
+            <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.7 }}>채팅</span>
+            <button
+              onClick={() => setChatOpen(false)}
+              style={{ background: "transparent", border: "none", color: "#fff", opacity: 0.5, fontSize: 11 }}
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <ChatPanel roomId={roomId} compact />
           </div>
         </div>
       )}
