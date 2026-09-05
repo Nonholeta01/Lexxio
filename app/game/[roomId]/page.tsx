@@ -38,8 +38,6 @@ import ChatPanel from "@/components/ChatPanel";
 import ConfirmModal from "@/components/ConfirmModal";
 import { useCardTheme } from "@/lib/cardTheme";
 import { useChat } from "@/lib/chat";
-import { usePlayLog } from "@/lib/playLog";
-import PlayHistoryStrip from "@/components/PlayHistoryStrip";
 
 interface SeatedPlayer {
   seat_no: number;
@@ -78,7 +76,6 @@ export default function GamePage() {
   const chatInitializedRef = useRef(false);
   const lastChatMessageIdRef = useRef<string | null>(null);
   const { messages: chatMessages } = useChat(roomId);
-  const playLog = usePlayLog(roomId, tableState?.round_number ?? 1);
 
   const lastComboPlayerRef = useRef<string | null>(null);
   const lastRoundWinnerRef = useRef<string | null>(null);
@@ -353,11 +350,10 @@ export default function GamePage() {
     const currentEval = evaluateCombo(tableState.current_combo, playerCount);
     if (!currentEval) return;
 
-    const playedThisRound = playLog.flatMap((entry) => entry.cards);
-    if (isComboUnbeatable(currentEval, playedThisRound, playerCount)) {
+    if (isComboUnbeatable(currentEval)) {
       forceReturnToLeader(roomId).catch(() => {});
     }
-  }, [tableState?.current_combo_player_id, playLog, myId, hostId, playerCount]);
+  }, [tableState?.current_combo_player_id, myId, hostId, playerCount]);
 
   // ---------- 봇 턴 자동 실행 (방장 브라우저가 대신 둠) ----------
   const botActingRef = useRef(false);
@@ -552,14 +548,11 @@ export default function GamePage() {
           flex: 1,
           display: "flex",
           flexDirection: "column",
-          justifyContent: "flex-start",
+          justifyContent: "center",
           overflowY: "auto",
           position: "relative",
         }}
       >
-        {!isPaused && playerCount && (
-          <PlayHistoryStrip entries={playLog} playerCount={playerCount} theme={cardTheme} />
-        )}
         <CurrentComboBanner
           theme={cardTheme}
           hidden={isPaused}

@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, Reorder } from "framer-motion";
 import type { Card } from "@/lib/lexioEngine";
 import { cardId } from "@/lib/lexioEngine";
 import LexioCard, { type CardTheme } from "./LexioCard";
 
 const MAX_TILE_WIDTH = 34; // 넘지 않을 최대 폭(px) — 자리가 부족하면 실측해서 이보다 더 줄임
+const CUSTOM_TILE_WIDTH = 40; // "내맘대로" 모드는 가로 스크롤 한 줄이라 폭을 고정해도 됨
 const ROW_GAP = 4;
 const ROW_PADDING_X = 10; // 좌우 각각
+
+type SortMode = "number" | "suit" | "custom";
 
 export default function HandTray({
   hand,
@@ -37,8 +40,27 @@ export default function HandTray({
   const [armed, setArmed] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [tileWidth, setTileWidth] = useState(MAX_TILE_WIDTH);
+  const [sortMode, setSortMode] = useState<SortMode>("number");
+  const [customOrderIds, setCustomOrderIds] = useState<string[]>([]);
 
-  const sorted = [...hand].sort((a, b) => a.number - b.number || a.suit - b.suit);
+  const numberSorted = [...hand].sort((a, b) => a.number - b.number || a.suit - b.suit);
+  const suitSorted = [...hand].sort((a, b) => a.suit - b.suit || a.number - b.number);
+
+  // "내맘대로" 순서는 손패가 바뀔 때마다(카드 내기 등) 유지하되, 없어진 카드는 빼고
+  // 새로 생긴 카드(새 라운드 등)는 뒤에 붙여서 계속 맞춰준다.
+  useEffect(() => {
+    setCustomOrderIds((prev) => {
+      const handIds = hand.map(cardId);
+      const stillHere = prev.filter((id) => handIds.includes(id));
+      const newIds = handIds.filter((id) => !stillHere.includes(id));
+      return [...stillHere, ...newIds];
+    });
+  }, [hand]);
+
+  const cardById = new Map(hand.map((c) => [cardId(c), c]));
+  const customSorted = customOrderIds.map((id) => cardById.get(id)).filter(Boolean) as Card[];
+
+  const sorted = sortMode === "number" ? numberSorted : sortMode === "suit" ? suitSorted : customSorted;
   const topCount = Math.ceil(sorted.length / 2);
   const topRow = sorted.slice(0, topCount);
   const bottomRow = sorted.slice(topCount);
@@ -113,38 +135,71 @@ export default function HandTray({
     onPass();
   }
 
+  function switchSortMode(mode: SortMode) {
+    if (mode === "custom" && sortMode !== "custom") {
+      // 처음 "내맘대로"로 바꾸는 순간엔, 지금 보고 있던 순서를 그대로 시작점으로 삼음
+      setCustomOrderIds(sorted.map(cardId));
+    }
+    setSortMode(mode);
+  }
+
   const selectedCount = selectedIds.size;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div
-        ref={containerRef}
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 5,
-          padding: `16px ${ROW_PADDING_X}px 4px`,
-        }}
-      >
-        <CardRow
-          cards={topRow}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* 정렬 모드 선택 */}
+      <div style={{ display: "flex", gap: 6, padding: "0 12px" }}>
+        <SortButton active={sortMode === "number"} onClick={() => switchSortMode("number")}>
+          숫자순
+        </SortButton>
+        <SortButton active={sortMode === "suit"} onClick={() => switchSortMode("suit")}>
+          모양순
+        </SortButton>
+        <SortButton active={sortMode === "custom"} onClick={() => switchSortMode("custom")}>
+          내맘대로
+        </SortButton>
+      </div>
+
+      {sortMode === "custom" ? (
+        <CustomOrderRow
+          cards={customSorted}
+          orderIds={customOrderIds}
+          onReorder={setCustomOrderIds}
           hidden={hidden}
           theme={theme}
-          tileWidth={tileWidth}
           selectedIds={selectedIds}
           onToggle={toggle}
         />
-        {bottomRow.length > 0 && (
+      ) : (
+        <div
+          ref={containerRef}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 5,
+            padding: `4px ${ROW_PADDING_X}px 4px`,
+          }}
+        >
           <CardRow
-            cards={bottomRow}
+            cards={topRow}
             hidden={hidden}
             theme={theme}
             tileWidth={tileWidth}
             selectedIds={selectedIds}
             onToggle={toggle}
           />
-        )}
-      </div>
+          {bottomRow.length > 0 && (
+            <CardRow
+              cards={bottomRow}
+              hidden={hidden}
+              theme={theme}
+              tileWidth={tileWidth}
+              selectedIds={selectedIds}
+              onToggle={toggle}
+            />
+          )}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, padding: "0 56px 12px 12px" }}>
         <button
@@ -189,7 +244,35 @@ export default function HandTray({
   );
 }
 
-/** 한 줄 — 실측으로 계산된 고정 px 폭으로 카드를 그림 (절대 넘치지 않음) */
+function SortButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "4px 10px",
+        borderRadius: 14,
+        border: active ? "1px solid #e0304a" : "1px solid rgba(255,255,255,0.15)",
+        background: active ? "rgba(224,48,74,0.2)" : "rgba(255,255,255,0.05)",
+        color: "#fff",
+        fontSize: 11,
+        fontWeight: 700,
+        opacity: active ? 1 : 0.6,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** 한 줄 — 실측으로 계산된 고정 px 폭으로 카드를 그림 (절대 넘치지 않음), 숫자순/모양순 전용 */
 function CardRow({
   cards,
   hidden,
@@ -233,6 +316,70 @@ function CardRow({
         </AnimatePresence>
       )}
     </div>
+  );
+}
+
+/** "내맘대로" 모드 — 가로 한 줄, 카드를 드래그해서 순서를 직접 바꿀 수 있음 */
+function CustomOrderRow({
+  cards,
+  orderIds,
+  onReorder,
+  hidden,
+  theme,
+  selectedIds,
+  onToggle,
+}: {
+  cards: Card[];
+  orderIds: string[];
+  onReorder: (ids: string[]) => void;
+  hidden: boolean;
+  theme: CardTheme;
+  selectedIds: Set<string>;
+  onToggle: (card: Card) => void;
+}) {
+  if (hidden) {
+    return (
+      <div style={{ display: "flex", gap: ROW_GAP, overflowX: "auto", padding: `4px ${ROW_PADDING_X}px` }}>
+        {cards.map((card) => (
+          <CardBack key={cardId(card)} theme={theme} widthPx={CUSTOM_TILE_WIDTH} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <Reorder.Group
+      as="div"
+      axis="x"
+      values={orderIds}
+      onReorder={onReorder}
+      style={{
+        display: "flex",
+        gap: ROW_GAP,
+        overflowX: "auto",
+        padding: `4px ${ROW_PADDING_X}px`,
+        margin: 0,
+        listStyle: "none",
+      }}
+    >
+      {cards.map((card) => (
+        <Reorder.Item
+          key={cardId(card)}
+          value={cardId(card)}
+          as="div"
+          style={{ listStyle: "none", flexShrink: 0 }}
+          whileDrag={{ scale: 1.08, zIndex: 5 }}
+        >
+          <LexioCard
+            card={card}
+            theme={theme}
+            widthPx={CUSTOM_TILE_WIDTH}
+            selected={selectedIds.has(cardId(card))}
+            onClick={() => onToggle(card)}
+          />
+        </Reorder.Item>
+      ))}
+    </Reorder.Group>
   );
 }
 
