@@ -17,6 +17,7 @@ import {
   getBotHand,
   botPlayCards,
   botPassTurn,
+  getHandCounts,
   type TableState,
 } from "@/lib/gameApi";
 import { evaluateCombo, canBeat, type Card, type PlayerCount, type HandEval } from "@/lib/lexioEngine";
@@ -60,6 +61,7 @@ export default function GamePage() {
   const [tableState, setTableStateLocal] = useState<TableState | null>(null);
   const [myHand, setMyHand] = useState<Card[]>([]);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [handCounts, setHandCounts] = useState<Record<string, number>>({});
   const [roundResult, setRoundResult] = useState<
     { nickname: string; remaining: number; delta: number }[] | null
   >(null);
@@ -170,6 +172,14 @@ export default function GamePage() {
     const timer = setTimeout(() => setChatToast(null), 5000);
     return () => clearTimeout(timer);
   }, [chatToast]);
+
+  // ---------- 남은 패 개수 갱신 (카드를 낼 때마다 바뀌므로 그때그때 다시 조회) ----------
+  useEffect(() => {
+    if (!tableState) return;
+    getHandCounts(roomId)
+      .then(setHandCounts)
+      .catch(() => {});
+  }, [roomId, tableState?.round_number, tableState?.current_combo_player_id, tableState?.current_turn_seat]);
 
   // ---------- 사운드: 새 라운드 딜(촤라락) ----------
   useEffect(() => {
@@ -507,6 +517,7 @@ export default function GamePage() {
         targetScore={targetScore}
         activePlayerId={currentTurnPlayerId()}
         toast={chatToast}
+        handCounts={handCounts}
       />
 
       <div
@@ -547,6 +558,7 @@ export default function GamePage() {
         onPlay={handlePlay}
         onPass={handlePass}
         onArmedChange={setArmedCards}
+        secondsLeft={secondsLeft}
       />
 
       {/* 일시정지 팝업 — 전원에게 보이고, 건 사람에게만 재개 버튼 */}
@@ -683,7 +695,7 @@ export default function GamePage() {
               </div>
             ))}
 
-            {tableState?.round_winner_id === myId && (
+            {myId === hostId && (
               <button
                 onClick={handleRequestAdvance}
                 disabled={advanceRequestedByMe}

@@ -168,3 +168,14 @@ export async function removePlayer(roomId: string, playerId: string): Promise<vo
   const { error } = await supabase.rpc("remove_player", { p_room_id: roomId, p_player_id: playerId });
   if (error) throw error;
 }
+
+/** 각 참가자의 남은 패 "개수"만 조회 (실제 카드는 절대 안 보임) */
+export async function getHandCounts(roomId: string): Promise<Record<string, number>> {
+  const { data, error } = await supabase.rpc("get_hand_counts", { p_room_id: roomId });
+  if (error) throw error;
+  const map: Record<string, number> = {};
+  (data ?? []).forEach((row: any) => {
+    map[row.player_id] = row.card_count;
+  });
+  return map;
+}

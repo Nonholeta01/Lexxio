@@ -17,6 +17,7 @@ export default function HandTray({
   onPlay,
   onPass,
   onArmedChange,
+  secondsLeft,
 }: {
   hand: Card[];
   theme?: CardTheme;
@@ -28,6 +29,8 @@ export default function HandTray({
   /** "내기"를 한 번 눌러 확정 대기 상태가 될 때마다 그 카드들을(해제되면 null) 부모에 알려줌
    * — 부모는 이 값을 갖고 있다가 시간이 다 되면 대신 제출시킨다 */
   onArmedChange?: (armedCards: Card[] | null) => void;
+  /** 남은 턴 제한시간(초) — 내기 버튼에 실시간으로 표시 */
+  secondsLeft?: number | null;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [armed, setArmed] = useState(false);
@@ -174,7 +177,11 @@ export default function HandTray({
             boxShadow: armed ? "0 0 0 2px rgba(255,255,255,0.5)" : "none",
           }}
         >
-          {armed ? "다시 눌러 확정!" : `내기 ${selectedCount > 0 ? `(${selectedCount}장)` : ""}`}
+          {armed
+            ? "다시 눌러 확정!"
+            : `내기 ${selectedCount > 0 ? `(${selectedCount}장)` : ""}${
+                !disabled && secondsLeft !== null && secondsLeft !== undefined ? ` · ${secondsLeft}s` : ""
+              }`}
         </button>
       </div>
     </div>

@@ -361,10 +361,13 @@ create function public.request_advance(p_room_id uuid)
 returns void as $$
 declare
   v_winner uuid;
+  v_host_id uuid;
 begin
   select round_winner_id into v_winner from public.game_table_state where room_id = p_room_id;
-  if v_winner is null or auth.uid() != v_winner then
-    raise exception '이번 라운드 승자만 다음으로 넘길 수 있습니다.';
+  select host_id into v_host_id from public.rooms where id = p_room_id;
+  -- 승자 본인이거나(사람이 이겼을 때) 방장이면(AI가 이겨서 승자 본인이 누를 수 없을 때) 진행 가능
+  if v_winner is null or (auth.uid() != v_winner and auth.uid() != v_host_id) then
+    raise exception '이번 라운드 승자 또는 방장만 다음으로 넘길 수 있습니다.';
   end if;
   update public.game_table_state set advance_requested = true, updated_at = now()
   where room_id = p_room_id;
@@ -713,6 +716,21 @@ begin
   delete from public.play_log where room_id = p_room_id;
 
   return v_game_id;
+end;
+$$ language plpgsql security definer;
+
+-- 각 참가자의 "남은 패 개수"만 알려줌 (실제 카드 내용은 절대 노출 안 됨 — 전략적으로 꼭 필요한 정보)
+create function public.get_hand_counts(p_room_id uuid)
+returns table(player_id uuid, card_count int) as $$
+begin
+  if not exists (select 1 from public.room_players where room_id = p_room_id and player_id = auth.uid()) then
+    raise exception '이 방의 참가자가 아닙니다.';
+  end if;
+
+  return query
+  select ph.player_id, jsonb_array_length(ph.cards)
+  from public.player_hands ph
+  where ph.room_id = p_room_id;
 end;
 $$ language plpgsql security definer;
 

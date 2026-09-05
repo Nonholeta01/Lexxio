@@ -13,12 +13,15 @@ export default function PlayerScoreBoard({
   targetScore,
   activePlayerId,
   toast,
+  handCounts,
 }: {
   roomId: string;
   targetScore: number;
   activePlayerId?: string | null;
   /** 이 사람 이름표 바로 아래에 겹쳐서(레이아웃 안 밀리게) 말풍선을 띄움 */
   toast?: { playerId: string; content: string } | null;
+  /** playerId → 남은 패 개수 (전략적으로 꼭 필요한 정보라 항상 보여줌) */
+  handCounts?: Record<string, number>;
 }) {
   const scores = useMatchScores(roomId);
   const badgeHolders = useBadgeHolders();
@@ -54,6 +57,9 @@ export default function PlayerScoreBoard({
           <div style={{ fontSize: 13, fontWeight: 800, color: "#e0304a" }}>
             {s.score} <span style={{ opacity: 0.4, fontSize: 10 }}>/ {targetScore}</span>
           </div>
+          {handCounts && handCounts[s.player_id] !== undefined && (
+            <div style={{ fontSize: 10, opacity: 0.55, marginTop: 1 }}>🀄 {handCounts[s.player_id]}장</div>
+          )}
 
           {toast && toast.playerId === s.player_id && (
             <div
