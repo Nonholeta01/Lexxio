@@ -334,8 +334,8 @@ function CardRow({
   );
 }
 
-/** "내맘대로" 모드 — 2줄 배치를 유지하면서, 드래그로 놓은 위치(좌표)를 직접 계산해서 그 자리에 끼워 넣음
- * (framer-motion의 Reorder는 한 줄 기준으로만 계산해서 2줄에서는 위치가 꼬이길래 직접 계산하는 방식으로 교체) */
+/** "내맘대로" 모드 — 드래그 중인 위치에서 "실제로 렌더링된 다른 카드들과의 거리"를 재서
+ * 가장 가까운 자리로 실시간으로 끼워 넣는다 (좌표 계산 대신 실측 방식이라 훨씬 정확함) */
 function CustomOrderRow({
   cards,
   orderIds,
@@ -355,49 +355,49 @@ function CustomOrderRow({
   selectedIds: Set<string>;
   onToggle: (card: Card) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const cardElsRef = useRef<Record<string, HTMLDivElement | null>>({});
   const topCount = Math.ceil(cards.length / 2);
   const topRow = cards.slice(0, topCount);
   const bottomRow = cards.slice(topCount);
 
-  function handleDragEnd(card: Card, info: { point: { x: number; y: number } }) {
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const relX = info.point.x - rect.left - ROW_PADDING_X;
-    const relY = info.point.y - rect.top;
+  function reorderTo(draggedId: string, point: { x: number; y: number }) {
+    let nearestId: string | null = null;
+    let nearestDist = Infinity;
 
-    const rowHeight = tileWidth / 0.72 + ROW_GAP;
-    const rowIndex = Math.max(0, Math.min(1, Math.floor(relY / rowHeight)));
+    for (const [id, el] of Object.entries(cardElsRef.current)) {
+      if (id === draggedId || !el) continue;
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const dist = Math.hypot(point.x - cx, point.y - cy);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestId = id;
+      }
+    }
+    if (!nearestId) return;
 
-    const colWidth = tileWidth + ROW_GAP;
-    const rowLength = rowIndex === 0 ? topRow.length : bottomRow.length;
-    const colIndex = Math.max(0, Math.min(rowLength, Math.round(relX / colWidth)));
-
-    const targetFlatIndex = rowIndex === 0 ? colIndex : topCount + colIndex;
-
-    const draggedId = cardId(card);
     const withoutDragged = orderIds.filter((id) => id !== draggedId);
-    const clampedIndex = Math.max(0, Math.min(withoutDragged.length, targetFlatIndex));
-    const next = [
-      ...withoutDragged.slice(0, clampedIndex),
-      draggedId,
-      ...withoutDragged.slice(clampedIndex),
-    ];
-    onReorder(next);
+    const nearestIndex = withoutDragged.indexOf(nearestId);
+    if (nearestIndex === -1) return;
+
+    const nearestEl = cardElsRef.current[nearestId];
+    if (!nearestEl) return;
+    const nearestRect = nearestEl.getBoundingClientRect();
+    const insertAfter = point.x > nearestRect.left + nearestRect.width / 2;
+    const insertIndex = insertAfter ? nearestIndex + 1 : nearestIndex;
+
+    const next = [...withoutDragged.slice(0, insertIndex), draggedId, ...withoutDragged.slice(insertIndex)];
+    // 순서가 실제로 바뀌었을 때만 갱신 (매 프레임 불필요한 리렌더 방지)
+    if (next.join(",") !== orderIds.join(",")) onReorder(next);
+  }
+
+  function registerRef(id: string, el: HTMLDivElement | null) {
+    cardElsRef.current[id] = el;
   }
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        width: "100%",
-        display: "flex",
-        flexDirection: "column",
-        gap: ROW_GAP,
-        padding: `4px ${ROW_PADDING_X}px`,
-      }}
-    >
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: ROW_GAP, padding: `4px ${ROW_PADDING_X}px` }}>
       <div style={{ display: "flex", gap: ROW_GAP, justifyContent: "center" }}>
         {topRow.map((card) =>
           hidden ? (
@@ -410,7 +410,8 @@ function CustomOrderRow({
               tileWidth={tileWidth}
               selected={selectedIds.has(cardId(card))}
               onToggle={onToggle}
-              onDragEnd={handleDragEnd}
+              onDrag={reorderTo}
+              registerRef={registerRef}
             />
           )
         )}
@@ -428,7 +429,8 @@ function CustomOrderRow({
                 tileWidth={tileWidth}
                 selected={selectedIds.has(cardId(card))}
                 onToggle={onToggle}
-                onDragEnd={handleDragEnd}
+                onDrag={reorderTo}
+                registerRef={registerRef}
               />
             )
           )}
@@ -438,31 +440,36 @@ function CustomOrderRow({
   );
 }
 
-/** 자유롭게 드래그되다가, 놓으면 항상 원래(=업데이트된 정렬 기준) 격자 자리로 부드럽게 스냅됨 */
+/** 자유롭게 드래그되고, 드래그 중에도 실시간으로 가까운 자리에 끼워지며(다른 카드들이 자리를 비켜줌),
+ * 손을 떼면 항상 격자 자리로 부드럽게 스냅됨 */
 function DraggableCard({
   card,
   theme,
   tileWidth,
   selected,
   onToggle,
-  onDragEnd,
+  onDrag,
+  registerRef,
 }: {
   card: Card;
   theme: CardTheme;
   tileWidth: number;
   selected: boolean;
   onToggle: (card: Card) => void;
-  onDragEnd: (card: Card, info: { point: { x: number; y: number } }) => void;
+  onDrag: (draggedId: string, point: { x: number; y: number }) => void;
+  registerRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
+  const id = cardId(card);
   return (
     <motion.div
+      ref={(el) => registerRef(id, el)}
       layout
       drag
       dragMomentum={false}
       dragElastic={0.12}
       dragSnapToOrigin
       whileDrag={{ scale: 1.15, zIndex: 20 }}
-      onDragEnd={(_e, info) => onDragEnd(card, info)}
+      onDrag={(_e, info) => onDrag(id, info.point)}
       style={{ touchAction: "none" }}
     >
       <LexioCard
