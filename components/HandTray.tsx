@@ -335,7 +335,7 @@ function CardRow({
 }
 
 /** "내맘대로" 모드 — 드래그 중인 위치에서 "실제로 렌더링된 다른 카드들과의 거리"를 재서
- * 가장 가까운 자리로 실시간으로 끼워 넣는다 (좌표 계산 대신 실측 방식이라 훨씬 정확함) */
+ * 가장 가까운 자리로 끼워 넣는다 (좌표 계산 대신 실측 방식이라 훨씬 정확함) */
 function CustomOrderRow({
   cards,
   orderIds,
@@ -440,8 +440,8 @@ function CustomOrderRow({
   );
 }
 
-/** 자유롭게 드래그되고, 드래그 중에도 실시간으로 가까운 자리에 끼워지며(다른 카드들이 자리를 비켜줌),
- * 손을 떼면 항상 격자 자리로 부드럽게 스냅됨 */
+/** 자유롭게 드래그되다가, 손을 뗀 순간에만 딱 한 번 계산해서 그 자리로 부드럽게 스냅됨
+ * (드래그 도중 계속 재계산하면 카드들이 이랬다저랬다 하며 어수선해 보여서, 놓을 때 한 번만 정리함) */
 function DraggableCard({
   card,
   theme,
@@ -469,7 +469,7 @@ function DraggableCard({
       dragElastic={0.12}
       dragSnapToOrigin
       whileDrag={{ scale: 1.15, zIndex: 20 }}
-      onDrag={(_e, info) => onDrag(id, info.point)}
+      onDragEnd={(_e, info) => onDrag(id, info.point)}
       style={{ touchAction: "none" }}
     >
       <LexioCard
