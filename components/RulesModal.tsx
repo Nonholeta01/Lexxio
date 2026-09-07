@@ -73,8 +73,8 @@ export default function RulesModal({ open, onClose }: { open: boolean; onClose: 
         </Section>
 
         <Section title="👑 선(先) 정하기">
-          1라운드는 <b>구름 3</b>을 가진 사람이 무조건 선이 돼. 그 다음 라운드부터는 직전 라운드
-          승자가 선이 돼. 선은 손패 중 원하는 조합을 자유롭게 낼 수 있어.
+          <b>매 라운드</b> 새로 받은 손패에 <b>구름 3</b>이 있는 사람이 무조건 선이 돼. 직전
+          라운드에서 이겼는지는 상관없어. 선은 손패 중 원하는 조합을 자유롭게 낼 수 있어.
         </Section>
 
         <Section title="🔢 숫자·문양 서열">

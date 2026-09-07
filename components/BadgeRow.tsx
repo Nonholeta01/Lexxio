@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Badge, { type BadgeType } from "./Badge";
 
-const BADGE_INFO: Record<BadgeType, { label: string; desc: string }> = {
+export const BADGE_INFO: Record<BadgeType, { label: string; desc: string }> = {
   totalScoreKing: {
     label: "총점 1위",
     desc: "20판 이상 플레이한 사람 중, 누적 점수가 가장 높은 사람에게 붙는 배지예요.",

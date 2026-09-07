@@ -126,6 +126,23 @@ begin
 end;
 $$ language plpgsql security definer;
 
+-- 게임 진행 중 방장이 응답 없이 사라졌을 때(브라우저 강제종료 등), 그 방에 실제로
+-- 접속해 있는 참가자 중 하나가 스스로 방장을 이어받기 위해 호출한다.
+-- (leaveRoom()의 정상적인 위임과 달리, 이건 "원래 방장이 정말 나갔는지" 서버가 검증할 방법이
+--  없어서 호출자가 이 방의 참가자이기만 하면 그냥 허용함 — 친구들끼리 쓰는 앱이라 이 정도 신뢰는 괜찮음)
+create function public.claim_host(p_room_id uuid)
+returns void as $$
+begin
+  if not exists (
+    select 1 from public.room_players where room_id = p_room_id and player_id = auth.uid()
+  ) then
+    raise exception '이 방의 참가자가 아닙니다.';
+  end if;
+
+  update public.rooms set host_id = auth.uid() where id = p_room_id;
+end;
+$$ language plpgsql security definer;
+
 -- 방장이 사람(강퇴, 다시 들어오는 건 자유) 또는 AI(제거/난이도 변경 전 단계)를 자리에서 내보냄
 create function public.remove_player(p_room_id uuid, p_player_id uuid)
 returns void as $$
@@ -701,6 +718,7 @@ declare
   v_current_seat int;
   v_current_combo jsonb;
   v_round_number int;
+  v_turn_deadline timestamptz;
   v_hand jsonb;
   v_new_hand jsonb;
   v_turn_limit int;
@@ -714,11 +732,16 @@ begin
     raise exception '이 방의 참가자가 아닙니다.';
   end if;
 
-  select current_turn_seat, current_combo, round_number into v_current_seat, v_current_combo, v_round_number
+  select current_turn_seat, current_combo, round_number, turn_deadline
+  into v_current_seat, v_current_combo, v_round_number, v_turn_deadline
   from public.game_table_state where room_id = p_room_id;
 
   if v_current_seat is null or v_current_seat != v_seat then
     raise exception '지금은 당신의 차례가 아닙니다.';
+  end if;
+
+  if v_turn_deadline is not null and now() > v_turn_deadline then
+    raise exception '제한시간이 지났습니다.';
   end if;
 
   if v_current_combo is not null and jsonb_array_length(v_current_combo) != jsonb_array_length(p_cards) then
@@ -800,6 +823,7 @@ declare
   v_current_seat int;
   v_current_combo jsonb;
   v_round_number int;
+  v_turn_deadline timestamptz;
   v_hand jsonb;
   v_new_hand jsonb;
   v_turn_limit int;
@@ -816,9 +840,13 @@ begin
   select seat_no into v_seat from public.room_players where room_id = p_room_id and player_id = p_bot_id;
   if v_seat is null then raise exception '이 방에 없는 봇입니다.'; end if;
 
-  select current_turn_seat, current_combo, round_number into v_current_seat, v_current_combo, v_round_number
+  select current_turn_seat, current_combo, round_number, turn_deadline
+  into v_current_seat, v_current_combo, v_round_number, v_turn_deadline
   from public.game_table_state where room_id = p_room_id;
   if v_current_seat is null or v_current_seat != v_seat then raise exception '지금은 봇의 차례가 아닙니다.'; end if;
+  if v_turn_deadline is not null and now() > v_turn_deadline then
+    raise exception '제한시간이 지났습니다.';
+  end if;
   if v_current_combo is not null and jsonb_array_length(v_current_combo) != jsonb_array_length(p_cards) then
     raise exception '이전에 나온 조합과 같은 장수를 내야 합니다.';
   end if;
@@ -1210,10 +1238,16 @@ create policy "authenticated users can create rooms"
 create policy "host can update their room"
   on public.rooms for update
   using (auth.uid() = host_id)
-  with check (true);
--- ↑ using: "지금 방장인 사람만 수정 가능" / with check: 없으면 postgres가 using을 재사용해서
--- "수정 후에도 auth.uid()=host_id 여야 함"이 되어버려 방장 위임(host_id를 남에게 넘기기)이
--- 전부 조용히 거부됨 — 그래서 명시적으로 with check(true)로 풀어줌
+  with check (
+    -- host_id는 "이 방에 실제로 앉아있는 사람"에게만 넘길 수 있음.
+    -- (leaveRoom()의 방장 자동 위임 기능은 항상 room_players에서 다음 사람을 뽑아오므로 영향 없음)
+    -- 이게 없으면 with check(true)라서 방장이 host_id를 아무 uuid로나 바꿔서
+    -- 다른 사람 것도 아닌 방을 망가뜨리거나, 방에 없는 사람에게 방장을 넘겨버릴 수 있었음
+    exists (
+      select 1 from public.room_players rp
+      where rp.room_id = rooms.id and rp.player_id = host_id
+    )
+  );
 -- 참가자가 아무도 없는(방금 마지막 사람이 나간) 방은 누구든 정리 삭제할 수 있음
 create policy "anyone can delete an empty room"
   on public.rooms for delete

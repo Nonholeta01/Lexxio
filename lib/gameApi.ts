@@ -70,6 +70,15 @@ export async function passTurn(roomId: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * 방장이 응답 없이 사라졌을 때(브라우저 강제종료 등), 접속해 있는 다른 참가자가
+ * 스스로 방장을 이어받는다. (정상적으로 "나가기"를 눌러서 넘기는 leaveRoom()의 위임과는 별개 경로)
+ */
+export async function claimHost(roomId: string): Promise<void> {
+  const { error } = await supabase.rpc("claim_host", { p_room_id: roomId });
+  if (error) throw error;
+}
+
 /** 라운드가 끝난 뒤에만 호출 가능 — 전원의 남은 패를 공개해서 점수 계산에 사용 */
 export async function revealRoundHands(
   roomId: string

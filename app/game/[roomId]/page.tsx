@@ -10,6 +10,7 @@ import {
   fetchTableState,
   playCards,
   passTurn,
+  claimHost,
   revealRoundHands,
   pauseGame,
   unpauseGame,
@@ -313,7 +314,7 @@ export default function GamePage() {
     }
   }
 
-  // ---------- rooms.status 실시간 구독 → 매치 끝나면 방 화면으로 ----------
+  // ---------- rooms.status/host_id 실시간 구독 → 매치 끝나면 방 화면으로, 방장 위임되면 즉시 반영 ----------
   useEffect(() => {
     const channel = supabase
       .channel(`room-status-${roomId}-${Math.random().toString(36).slice(2)}`)
@@ -321,8 +322,12 @@ export default function GamePage() {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "rooms", filter: `id=eq.${roomId}` },
         (payload) => {
-          if ((payload.new as any).status === "waiting") {
+          const next = payload.new as any;
+          if (next.status === "waiting") {
             router.push(`/room/${roomId}`);
+          }
+          if (next.host_id) {
+            setHostId(next.host_id); // 새로고침 없이도 바로 새 방장 기준으로 동작하도록
           }
         }
       )
@@ -332,7 +337,60 @@ export default function GamePage() {
     };
   }, [roomId, router]);
 
+  // ---------- 실제 접속 여부 추적(presence) — 방장이 응답 없이 사라졌는지 판단하는 데 사용 ----------
+  const [presentPlayerIds, setPresentPlayerIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!myId) return;
+    const channel = supabase.channel(`presence-${roomId}`, {
+      config: { presence: { key: myId } },
+    });
+    channel.on("presence", { event: "sync" }, () => {
+      setPresentPlayerIds(new Set(Object.keys(channel.presenceState())));
+    });
+    channel.subscribe(async (status) => {
+      if (status === "SUBSCRIBED") {
+        await channel.track({ online_at: new Date().toISOString() });
+      }
+    });
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomId, myId]);
+
+  // ---------- 방장 부재 감지 → 접속해 있는 참가자 중 자리번호가 가장 빠른 사람이 방장 승계 ----------
+  // (방장이 브라우저를 그냥 닫아버리면 host_id 자체가 안 바뀌어서, 봇 턴 실행/라운드 정산처럼
+  //  방장 전용으로 걸려있던 진행 로직이 전부 멈춰버리는 문제가 있었음)
+  const claimingHostRef = useRef(false);
+  useEffect(() => {
+    if (!myId || !hostId || seated.length === 0 || presentPlayerIds.size === 0) return;
+    if (presentPlayerIds.has(hostId)) return; // 방장이 아직 접속해 있으면 아무것도 안 함
+
+    const timer = setTimeout(async () => {
+      if (claimingHostRef.current) return;
+      const nextHost = seated
+        .filter((s) => !s.isBot && presentPlayerIds.has(s.player_id))
+        .sort((a, b) => a.seat_no - b.seat_no)[0];
+      if (nextHost && nextHost.player_id === myId) {
+        claimingHostRef.current = true;
+        try {
+          await claimHost(roomId);
+        } catch (e) {
+          console.error("방장 승계 실패:", e);
+        } finally {
+          claimingHostRef.current = false;
+        }
+      }
+      // 8초간 방장이 계속 안 보이면(잠깐의 새로고침/재연결이 아니라 진짜 이탈로 판단) 승계 시도
+    }, 8000);
+
+    return () => clearTimeout(timer);
+  }, [myId, hostId, seated, presentPlayerIds, roomId]);
+
   // ---------- 턴 타이머 (초과 시: 확정 대기 중이던 패가 있으면 그걸 제출, 없으면 자동 패스) ----------
+  // 내 턴이 아니어도, 턴인 사람이 잠수/탈주해서 제한시간을 3초 넘게 넘기면
+  // 내(다른 아무 참가자든) 브라우저가 대신 패스 처리한다 — 안 그러면 그 사람이 나갈 때까지
+  // 게임이 영구히 멈춰있었음. pass_turn()은 이미 "제3자 대신 패스"를 지원하도록 서버에 돼있었는데
+  // 클라이언트가 그걸 안 쓰고 있던 게 문제였음.
   useEffect(() => {
     if (!tableState?.turn_deadline || tableState.paused_by || turnTimeLimit >= NO_TIME_LIMIT) {
       setSecondsLeft(null); // "제한없음"이거나 일시정지 중이면 카운트다운 자체를 안 보여줌
@@ -341,13 +399,21 @@ export default function GamePage() {
     const deadline = new Date(tableState.turn_deadline).getTime();
 
     const tick = () => {
-      const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+      const overtimeMs = Date.now() - deadline;
+      const left = Math.max(0, Math.round(-overtimeMs / 1000));
       setSecondsLeft(left);
-      if (left === 0 && myId === currentTurnPlayerId() && !tableState.round_winner_id) {
-        if (armedCards && armedCards.length > 0) {
-          handlePlay(armedCards);
-          setArmedCards(null);
-        } else {
+      if (tableState.round_winner_id) return;
+
+      if (overtimeMs >= 0) {
+        if (myId === currentTurnPlayerId()) {
+          if (armedCards && armedCards.length > 0) {
+            handlePlay(armedCards);
+            setArmedCards(null);
+          } else {
+            passTurn(roomId).catch(() => {});
+          }
+        } else if (overtimeMs >= 3000) {
+          // 턴인 사람이 3초 넘게 반응이 없음 — 다른 참가자가 대신 패스 처리
           passTurn(roomId).catch(() => {});
         }
       }

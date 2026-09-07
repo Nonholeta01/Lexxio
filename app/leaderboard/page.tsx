@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useBadgeHolders, MIN_GAMES_FOR_BADGES } from "@/lib/badges";
-import BadgeRow from "@/components/BadgeRow";
+import Badge, { type BadgeType } from "@/components/Badge";
+import BadgeRow, { BADGE_INFO } from "@/components/BadgeRow";
 import SupportCreatorButton from "@/components/SupportCreatorButton";
 
 interface LeaderboardRow {
@@ -58,6 +59,28 @@ export default function LeaderboardPage() {
         <p style={{ fontSize: 11, opacity: 0.45, margin: "4px 0 0" }}>
           {MIN_GAMES_FOR_BADGES}판 이상 플레이해야 칭호 랭킹에 들어가요
         </p>
+      </div>
+
+      {/* 뱃지 클릭 안 해도 바로 보이는 작은 설명란 */}
+      <div
+        style={{
+          margin: "0 16px 10px",
+          padding: "8px 10px",
+          borderRadius: 10,
+          background: "rgba(255,255,255,0.05)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+        }}
+      >
+        {(Object.keys(BADGE_INFO) as BadgeType[]).map((type) => (
+          <div key={type} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Badge type={type} size={13} />
+            <span style={{ fontSize: 10.5, opacity: 0.55, lineHeight: 1.4 }}>
+              <b style={{ opacity: 0.85 }}>{BADGE_INFO[type].label}</b> · {BADGE_INFO[type].desc}
+            </span>
+          </div>
+        ))}
       </div>
 
       <div style={{ display: "flex", gap: 8, padding: "0 16px 12px" }}>
