@@ -192,18 +192,26 @@ export default function GamePage() {
   }, [tableState?.round_number]);
 
   // ---------- 새 라운드 시작 알림: "OO님이 3구름 소지자입니다. 첫턴은 OO님입니다." ----------
+  // seated는 실시간 업데이트마다 새 배열로 바뀌므로 의존성에 넣으면 안 됨 —
+  // 그럴 경우 타이머가 걸리자마자 곧바로 재실행되어 clearTimeout만 하고 다시 걸지 않아
+  // 배너가 영원히 안 사라지는 문제가 있었음. ref로 최신값만 읽어온다.
+  const seatedRef = useRef(seated);
   useEffect(() => {
-    if (!tableState?.round_number || seated.length === 0) return;
+    seatedRef.current = seated;
+  }, [seated]);
+
+  useEffect(() => {
+    if (!tableState?.round_number) return;
     if (announcedRoundRef.current === tableState.round_number) return; // 같은 라운드에서 중복 방지(재접속 등)
+
+    const starter = seatedRef.current.find((s) => s.seat_no === tableState.current_turn_seat);
+    if (!starter) return; // 아직 seated가 안 채워졌으면 이번엔 건너뜀
+
     announcedRoundRef.current = tableState.round_number;
-
-    const starter = seated.find((s) => s.seat_no === tableState.current_turn_seat);
-    if (!starter) return;
-
     setRoundStartAnnounce(starter.nickname);
     const timer = setTimeout(() => setRoundStartAnnounce(null), 3500);
     return () => clearTimeout(timer);
-  }, [tableState?.round_number, tableState?.current_turn_seat, seated]);
+  }, [tableState?.round_number]);
 
   useEffect(() => {
     if (!tableState) return;
@@ -584,24 +592,25 @@ export default function GamePage() {
           <div
             style={{
               position: "absolute",
-              top: "50%",
+              top: 10,
               left: "50%",
-              transform: "translate(-50%, -50%)",
+              transform: "translateX(-50%)",
               background: "rgba(20,20,24,0.92)",
               border: "1px solid #f2c14e",
               borderRadius: 14,
-              padding: "18px 26px",
+              padding: "12px 22px",
               textAlign: "center",
               boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
               zIndex: 20,
               pointerEvents: "none",
+              maxWidth: "90%",
             }}
           >
-            <div style={{ fontSize: 15, color: "#fff", marginBottom: 4 }}>
+            <div style={{ fontSize: 14, color: "#fff", marginBottom: 2 }}>
               <strong style={{ color: "#f2c14e" }}>{roundStartAnnounce}</strong>님이 3구름
               소지자입니다.
             </div>
-            <div style={{ fontSize: 15, color: "#fff" }}>
+            <div style={{ fontSize: 14, color: "#fff" }}>
               첫턴은 <strong style={{ color: "#f2c14e" }}>{roundStartAnnounce}</strong>님입니다.
             </div>
           </div>
