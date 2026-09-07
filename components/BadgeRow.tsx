@@ -6,15 +6,15 @@ import Badge, { type BadgeType } from "./Badge";
 export const BADGE_INFO: Record<BadgeType, { label: string; desc: string }> = {
   totalScoreKing: {
     label: "총점 1위",
-    desc: "20판 이상 플레이한 사람 중, 누적 점수가 가장 높은 사람에게 붙는 배지예요.",
+    desc: "누적 점수가 가장 높은 사람에게 붙는 배지예요.",
   },
   avgScoreKing: {
     label: "겜잘알 1위",
-    desc: "20판 이상 플레이한 사람 중, 게임당 평균 점수가 가장 높은 사람에게 붙는 배지예요.",
+    desc: "게임당 평균 점수가 가장 높은 사람에게 붙는 배지예요.",
   },
   bestSingleMatch: {
     label: "최고점 달인",
-    desc: "20판 이상 플레이한 사람 중, 한 라운드에서 가장 높은 점수를 낸 사람에게 붙는 배지예요.",
+    desc: "한 라운드에서 가장 높은 점수를 낸 사람에게 붙는 배지예요.",
   },
 };
 
