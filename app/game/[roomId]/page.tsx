@@ -192,26 +192,26 @@ export default function GamePage() {
   }, [tableState?.round_number]);
 
   // ---------- 새 라운드 시작 알림: "OO님이 3구름 소지자입니다. 첫턴은 OO님입니다." ----------
-  // seated는 실시간 업데이트마다 새 배열로 바뀌므로 의존성에 넣으면 안 됨 —
-  // 그럴 경우 타이머가 걸리자마자 곧바로 재실행되어 clearTimeout만 하고 다시 걸지 않아
-  // 배너가 영원히 안 사라지는 문제가 있었음. ref로 최신값만 읽어온다.
-  const seatedRef = useRef(seated);
-  useEffect(() => {
-    seatedRef.current = seated;
-  }, [seated]);
-
+  // (1) 선을 찾는 effect: seated가 아직 안 불러와졌으면 이번엔 건너뛰고,
+  //     seated가 로드돼서 다시 실행되면 그때 찾아서 announcedRoundRef로 한 번만 표시한다.
   useEffect(() => {
     if (!tableState?.round_number) return;
-    if (announcedRoundRef.current === tableState.round_number) return; // 같은 라운드에서 중복 방지(재접속 등)
+    if (announcedRoundRef.current === tableState.round_number) return; // 이미 이번 라운드는 표시함
 
-    const starter = seatedRef.current.find((s) => s.seat_no === tableState.current_turn_seat);
-    if (!starter) return; // 아직 seated가 안 채워졌으면 이번엔 건너뜀
+    const starter = seated.find((s) => s.seat_no === tableState.current_turn_seat);
+    if (!starter) return; // seated 아직 준비 안 됐으면 seated가 바뀔 때 다시 시도됨
 
     announcedRoundRef.current = tableState.round_number;
     setRoundStartAnnounce(starter.nickname);
+  }, [tableState?.round_number, tableState?.current_turn_seat, seated]);
+
+  // (2) 알림을 지우는 effect: roundStartAnnounce 값 자체에만 반응하므로,
+  //     seated 등 다른 실시간 업데이트로 인해 타이머가 중간에 취소되지 않는다.
+  useEffect(() => {
+    if (!roundStartAnnounce) return;
     const timer = setTimeout(() => setRoundStartAnnounce(null), 3500);
     return () => clearTimeout(timer);
-  }, [tableState?.round_number]);
+  }, [roundStartAnnounce]);
 
   useEffect(() => {
     if (!tableState) return;
