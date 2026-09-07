@@ -129,9 +129,6 @@ export default function RoomPage() {
       // 첫 턴은 60초를 준다 (단, "제한없음"을 골랐으면 처음부터 무제한)
       await startNewRound(
         roomId,
-        actualPlayerCount,
-        players.map((p) => ({ seat_no: p.seat_no, player_id: p.player.id })),
-        0,
         1,
         turnTimeLimit === NO_TIME_LIMIT ? NO_TIME_LIMIT : 60
       );

@@ -1,6 +1,5 @@
 import { supabase } from "./supabaseClient";
-import type { Card, PlayerCount } from "./lexioEngine";
-import { dealHands, Suit } from "./lexioEngine";
+import type { Card } from "./lexioEngine";
 
 /** "턴 제한시간 없음"을 표현하는 값 — 사실상 무제한이 되도록 아주 큰 초 단위를 씀 */
 export const NO_TIME_LIMIT = 999999;
@@ -19,37 +18,19 @@ export interface TableState {
 }
 
 /**
- * 방장이 새 라운드를 시작한다: 인원수에 맞게 셔플/분배 후 서버에 제출.
- * - 1라운드(첫 판)는 "3 구름"을 가진 사람이 무조건 선 — starterSeat 인자를 무시하고 자동 계산.
- * - 2라운드부터는 지난 라운드 승자가 선이 되므로 starterSeat 그대로 사용.
+ * 방장이 새 라운드를 시작한다.
+ * 셔플/분배와 "3구름 가진 사람이 선" 판정은 이제 전부 서버(start_round RPC)가 직접 수행한다.
+ * (예전엔 클라이언트가 dealHands()로 손패를 만들어 그대로 서버에 제출했는데,
+ *  방장 클라이언트가 조작되면 원하는 사람에게 원하는 패를 줄 수 있는 구조였어서 폐기함)
  * - turnSeconds: 이번에 배부된 첫 턴에 줄 제한시간 (1라운드는 60초, 이후엔 방 설정값)
  */
 export async function startNewRound(
   roomId: string,
-  playerCount: PlayerCount,
-  seatedPlayers: { seat_no: number; player_id: string }[],
-  starterSeat: number,
   roundNumber: number,
   turnSeconds: number
 ): Promise<void> {
-  const hands = dealHands(playerCount);
-  const sortedPlayers = seatedPlayers.sort((a, b) => a.seat_no - b.seat_no);
-  const payload = sortedPlayers.map((p, idx) => ({ player_id: p.player_id, cards: hands[idx] }));
-
-  let resolvedStarterSeat = starterSeat;
-  if (roundNumber === 1) {
-    const cloudThreeIdx = hands.findIndex((hand) =>
-      hand.some((c) => c.number === 3 && c.suit === Suit.Cloud)
-    );
-    if (cloudThreeIdx !== -1) {
-      resolvedStarterSeat = sortedPlayers[cloudThreeIdx].seat_no;
-    }
-  }
-
   const { error } = await supabase.rpc("start_round", {
     p_room_id: roomId,
-    p_hands: payload,
-    p_starter_seat: resolvedStarterSeat,
     p_round_number: roundNumber,
     p_turn_seconds: turnSeconds,
   });

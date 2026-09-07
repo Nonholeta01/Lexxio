@@ -37,22 +37,17 @@ export async function initMatchScores(roomId: string, playerIds: string[]): Prom
 }
 
 /**
- * 한 라운드가 끝났을 때 각 플레이어의 점수 변화량(delta)을 반영한다.
- * (라운드별 실제 득점 계산식은 게임 화면 쪽 로직에서 결정해서 넘겨줌)
+ * 한 라운드가 끝났을 때의 점수 반영을 서버(finalize_round RPC)에게 맡긴다.
+ * 클라이언트는 델타를 계산해서 넘기지 않는다 — player_hands에 실제로 남은 패를
+ * 서버가 직접 읽어서 계산하므로, RPC를 직접 호출해도 원하는 점수를 넣을 수 없다.
+ * 반환값은 서버가 실제로 반영한 델타이며, 화면 표시에도 이 값을 그대로 쓴다.
  */
-export async function applyRoundScores(
-  roomId: string,
-  deltas: { playerId: string; delta: number }[]
-): Promise<void> {
-  await Promise.all(
-    deltas.map(({ playerId, delta }) =>
-      supabase.rpc("increment_match_score", {
-        p_room_id: roomId,
-        p_player_id: playerId,
-        p_delta: delta,
-      })
-    )
-  );
+export async function finalizeRoundScores(
+  roomId: string
+): Promise<{ playerId: string; delta: number }[]> {
+  const { data, error } = await supabase.rpc("finalize_round", { p_room_id: roomId });
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({ playerId: row.player_id, delta: row.delta }));
 }
 
 /** 실시간 누적 점수 (이름표 옆에 표시할 용도) */
@@ -106,47 +101,17 @@ export function findMatchWinner(scores: MatchScoreRow[], targetScore: number): M
 }
 
 /**
- * 매치 종료 확정: games/game_results 에 "최종" 기록을 한 번만 남기고
- * match_scores 는 정리한다 (다음 매치를 위해 초기화).
- * → 리더보드에는 매치가 끝났을 때만 반영됨 (라운드마다 기록 X)
- * → 이번 매치에 AI 봇이 한 명이라도 있었으면 리더보드에는 아예 기록하지 않는다.
+ * 매치 종료 확정: 서버(finalize_match RPC)가 match_scores를 직접 확인해서
+ * 목표 점수 도달 여부까지 재검증한 뒤 games/game_results에 기록하고 방을 초기화한다.
+ * → 클라이언트가 games/game_results 테이블에 직접 insert하던 방식은 폐기
+ *   (원하는 점수/순위를 조작해서 리더보드에 넣을 수 있었음)
+ * → 이번 매치에 AI 봇이 한 명이라도 있었으면 서버가 알아서 리더보드 기록을 건너뜀
  */
-export async function finalizeMatch(roomId: string, playerCount: 3 | 4 | 5, scores: MatchScoreRow[]) {
-  const ranked = [...scores].sort((a, b) => b.score - a.score);
-
-  const { data: seatedPlayers } = await supabase
-    .from("room_players")
-    .select("player:profiles(is_bot)")
-    .eq("room_id", roomId);
-  const hasBot = (seatedPlayers ?? []).some((p: any) => p.player?.is_bot);
-
-  let gameId: string | null = null;
-
-  if (!hasBot) {
-    const { data: game, error: gameErr } = await supabase
-      .from("games")
-      .insert({ room_id: roomId, player_count: playerCount })
-      .select()
-      .single();
-    if (gameErr) throw gameErr;
-    gameId = game.id;
-
-    const results = ranked.map((s, idx) => ({
-      game_id: game.id,
-      player_id: s.player_id,
-      rank: idx + 1,
-      score: s.score,
-    }));
-
-    const { error: resultsErr } = await supabase.from("game_results").insert(results);
-    if (resultsErr) throw resultsErr;
-  }
-
-  await supabase.from("match_scores").delete().eq("room_id", roomId);
-  await supabase.from("play_log").delete().eq("room_id", roomId);
-  // 매치가 끝나면 방은 다시 "대기중" 상태로 돌아가 처음 방 화면 그대로 보여진다.
-  // (같은 인원으로 바로 재대결하고 싶으면 방장이 시작 버튼만 다시 누르면 됨)
-  await supabase.from("rooms").update({ status: "waiting" }).eq("id", roomId);
-
-  return gameId;
+export async function finalizeMatch(roomId: string, playerCount: 3 | 4 | 5): Promise<string | null> {
+  const { data, error } = await supabase.rpc("finalize_match", {
+    p_room_id: roomId,
+    p_player_count: playerCount,
+  });
+  if (error) throw error;
+  return (data as string | null) ?? null;
 }

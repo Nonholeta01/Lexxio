@@ -237,6 +237,81 @@ begin
 end;
 $$ language plpgsql security definer;
 
+-- ⚠️ 클라이언트가 이 RPC를 직접 호출해서 원하는 만큼 점수를 넣는 걸 막기 위해,
+-- 일반 로그인 사용자(authenticated)/비로그인(anon)에게서 실행 권한을 회수한다.
+-- finalize_round()/quit_match_with_penalty() 같은 SECURITY DEFINER 함수 내부에서
+-- perform으로 호출하는 건 함수 소유자 권한으로 실행되므로 계속 정상 동작한다.
+revoke execute on function public.increment_match_score(uuid, uuid, int) from public, anon, authenticated;
+
+-- 라운드 종료 시 점수 델타를 서버가 직접 계산해서 반영한다.
+-- (클라이언트가 delta를 불러주던 방식은 조작 가능해서 폐기 — player_hands에 실제로
+--  남아있는 패를 기준으로 서버가 재계산하므로 클라이언트 조작이 통하지 않는다.)
+create or replace function public.finalize_round(p_room_id uuid)
+returns table(player_id uuid, delta int) as $$
+declare
+  v_host_id uuid;
+  v_round_winner uuid;
+  v_apply_two_weight boolean;
+  v_winner_id uuid;
+  v_others_remaining_sum int := 0;
+  v_row record;
+begin
+  select host_id into v_host_id from public.rooms where id = p_room_id;
+  if auth.uid() != v_host_id then
+    raise exception '방장만 라운드 점수를 확정할 수 있습니다.';
+  end if;
+
+  select round_winner_id into v_round_winner
+  from public.game_table_state where room_id = p_room_id;
+  if v_round_winner is null then
+    raise exception '아직 라운드가 끝나지 않았습니다.';
+  end if;
+
+  select apply_two_weight into v_apply_two_weight from public.rooms where id = p_room_id;
+
+  -- 실제로 패가 0장인 사람을 서버가 직접 찾아서, 클라이언트가 주장하는 승자와 일치하는지 검증
+  select ph.player_id into v_winner_id
+  from public.player_hands ph
+  where ph.room_id = p_room_id and jsonb_array_length(ph.cards) = 0;
+
+  if v_winner_id is null or v_winner_id != v_round_winner then
+    raise exception '라운드 승자 정보가 일치하지 않습니다.';
+  end if;
+
+  select coalesce(sum(jsonb_array_length(ph.cards)), 0) into v_others_remaining_sum
+  from public.player_hands ph
+  where ph.room_id = p_room_id and ph.player_id != v_winner_id;
+
+  perform public.increment_match_score(p_room_id, v_winner_id, v_others_remaining_sum);
+  player_id := v_winner_id;
+  delta := v_others_remaining_sum;
+  return next;
+
+  for v_row in
+    select ph.player_id as pid,
+           jsonb_array_length(ph.cards) as remaining,
+           (
+             select count(*) from jsonb_array_elements(ph.cards) c
+             where (c->>'number')::int = 2
+           ) as two_count
+    from public.player_hands ph
+    where ph.room_id = p_room_id and ph.player_id != v_winner_id
+  loop
+    declare
+      v_multiplier int := case when v_apply_two_weight then power(2, v_row.two_count)::int else 1 end;
+      v_loser_delta int := -(v_row.remaining * v_multiplier);
+    begin
+      perform public.increment_match_score(p_room_id, v_row.pid, v_loser_delta);
+      player_id := v_row.pid;
+      delta := v_loser_delta;
+      return next;
+    end;
+  end loop;
+
+  return;
+end;
+$$ language plpgsql security definer;
+
 -- 라운드 하나에서 실제로 얻은 점수 기록 (매치 누적치와는 별개로, "한 라운드 최고점" 칭호 계산용)
 create table public.round_score_log (
   id uuid primary key default gen_random_uuid(),
@@ -338,21 +413,188 @@ alter table public.game_table_state enable row level security;
 create policy "table state viewable by authenticated users"
   on public.game_table_state for select using (auth.role() = 'authenticated');
 
--- 라운드 시작: 호스트가 (클라이언트에서 셔플/분배 계산 후) 각자 손패를 제출하면
--- 서버가 한 번에 저장하고 테이블 상태를 초기화한다.
--- p_hands 형식: [{ "player_id": "...", "cards": [{ "number": 5, "suit": 0 }, ...] }, ...]
-create function public.start_round(
+-- ---------- 서버 사이드 조합 판정 (lib/lexioEngine.ts 의 evaluateCombo와 동일 로직) ----------
+-- 클라이언트가 evaluateCombo/canBeat를 우회해서 임의의 조합을 서버에 기록시키는 걸 막기 위해
+-- play_cards()/bot_play_cards() 안에서 반드시 이 함수들로 재검증한다.
+
+create or replace function public.number_strength_rank(p_number int, p_max_number int)
+returns int as $$
+begin
+  if p_number >= 3 then
+    return p_number - 3;
+  elsif p_number = 1 then
+    return p_max_number - 2;
+  elsif p_number = 2 then
+    return p_max_number - 1;
+  else
+    raise exception '유효하지 않은 숫자입니다: %', p_number;
+  end if;
+end;
+$$ language plpgsql immutable;
+
+create or replace function public.match_straight_window(p_numbers int[], p_max_number int)
+returns int as $$
+declare
+  seq int[];
+  win int[];
+  sorted_input int[];
+  sorted_window int[];
+  i int;
+begin
+  seq := array(select generate_series(1, p_max_number));
+  seq := seq || seq[1]; -- 마지막에 1을 다시 랩핑
+
+  select array_agg(x order by x) into sorted_input from unnest(p_numbers) x;
+
+  for i in 0 .. (array_length(seq, 1) - 5) loop
+    win := seq[i+1 : i+5];
+    select array_agg(x order by x) into sorted_window from unnest(win) x;
+    if sorted_window = sorted_input then
+      return i; -- 인덱스가 클수록 강한 스트레이트
+    end if;
+  end loop;
+  return null;
+end;
+$$ language plpgsql immutable;
+
+-- p_cards(예: [{"number":3,"suit":0}, ...])가 유효한 조합이면 한 행을, 무효하면 0행을 반환
+create or replace function public.evaluate_combo(p_cards jsonb, p_max_number int)
+returns table(category text, primary_rank int, secondary_rank int) as $$
+declare
+  n int := jsonb_array_length(p_cards);
+  numbers int[];
+  suits int[];
+  distinct_numbers int;
+  is_flush boolean;
+  group_sizes int[];
+  quad_number int;
+  triple_number int;
+  straight_idx int;
+  top_rank int;
+  max_suit int;
+begin
+  select array_agg((c->>'number')::int), array_agg((c->>'suit')::int)
+  into numbers, suits
+  from jsonb_array_elements(p_cards) c;
+
+  if n = 1 then
+    category := 'SINGLE';
+    primary_rank := public.number_strength_rank(numbers[1], p_max_number);
+    secondary_rank := suits[1];
+    return next;
+    return;
+  end if;
+
+  if n = 2 then
+    if numbers[1] != numbers[2] then return; end if;
+    category := 'PAIR';
+    primary_rank := public.number_strength_rank(numbers[1], p_max_number);
+    secondary_rank := greatest(suits[1], suits[2]);
+    return next;
+    return;
+  end if;
+
+  if n = 3 then
+    if numbers[1] != numbers[2] or numbers[2] != numbers[3] then return; end if;
+    category := 'TRIPLE';
+    primary_rank := public.number_strength_rank(numbers[1], p_max_number);
+    secondary_rank := greatest(suits[1], suits[2], suits[3]);
+    return next;
+    return;
+  end if;
+
+  if n = 5 then
+    select array_agg(cnt order by cnt desc) into group_sizes
+    from (select count(*) cnt from unnest(numbers) x group by x) g;
+
+    is_flush := (suits[1] = suits[2] and suits[1] = suits[3] and suits[1] = suits[4] and suits[1] = suits[5]);
+    select count(distinct x) into distinct_numbers from unnest(numbers) x;
+
+    straight_idx := case when distinct_numbers = 5
+      then public.match_straight_window(numbers, p_max_number)
+      else null end;
+
+    if straight_idx is not null and is_flush then
+      category := 'STRAIGHT_FLUSH';
+      primary_rank := 4 * 1000 + straight_idx;
+      secondary_rank := suits[1];
+      return next;
+      return;
+    end if;
+
+    if group_sizes[1] = 4 then
+      select x into quad_number from (select x, count(*) c from unnest(numbers) x group by x) g where c = 4;
+      category := 'FOUR_CARD';
+      primary_rank := 3 * 1000 + public.number_strength_rank(quad_number, p_max_number);
+      secondary_rank := 0;
+      return next;
+      return;
+    end if;
+
+    if group_sizes[1] = 3 and group_sizes[2] = 2 then
+      select x into triple_number from (select x, count(*) c from unnest(numbers) x group by x) g where c = 3;
+      category := 'FULL_HOUSE';
+      primary_rank := 2 * 1000 + public.number_strength_rank(triple_number, p_max_number);
+      secondary_rank := 0;
+      return next;
+      return;
+    end if;
+
+    if is_flush then
+      select max(public.number_strength_rank(x, p_max_number)) into top_rank from unnest(numbers) x;
+      category := 'FLUSH';
+      primary_rank := 1 * 1000 + top_rank;
+      secondary_rank := suits[1];
+      return next;
+      return;
+    end if;
+
+    if straight_idx is not null then
+      select max(s) into max_suit from unnest(suits) s;
+      category := 'STRAIGHT';
+      primary_rank := 0 * 1000 + straight_idx;
+      secondary_rank := max_suit;
+      return next;
+      return;
+    end if;
+
+    return; -- 5장인데 어떤 조합에도 해당 안 됨
+  end if;
+
+  return; -- 1/2/3/5 장 이외는 전부 무효
+end;
+$$ language plpgsql immutable;
+
+-- 인원수 -> 최고 숫자(maxNumber) 매핑 (lib/lexioEngine.ts의 RULES와 반드시 동일하게 유지)
+create or replace function public.max_number_for_player_count(p_player_count int)
+returns int as $$
+begin
+  return case p_player_count
+    when 3 then 9
+    when 4 then 13
+    when 5 then 15
+    else null
+  end;
+end;
+$$ language plpgsql immutable;
+
+
+-- 방장이 새 라운드를 시작하면, 셔플/분배와 "3구름 가진 사람이 선(先)" 판정을 서버가 전부 직접 수행한다.
+-- (예전엔 클라이언트가 만든 손패를 그대로 믿고 저장했는데, 방장 클라이언트가 조작되면
+--  원하는 사람에게 원하는 패를 줄 수 있는 구조였어서 폐기 — 이제 클라이언트는 카드 내용을 전혀 모른 채 요청만 함)
+create or replace function public.start_round(
   p_room_id uuid,
-  p_hands jsonb,
-  p_starter_seat int,
   p_round_number int,
   p_turn_seconds int
 ) returns void as $$
 declare
   v_host_id uuid;
-  v_hand jsonb;
+  v_player_count int;
+  v_max_number int;
+  v_seated_count int;
+  v_starter_seat int;
 begin
-  select host_id into v_host_id
+  select host_id, player_count into v_host_id, v_player_count
   from public.rooms where id = p_room_id;
 
   if v_host_id is null then
@@ -362,18 +604,58 @@ begin
     raise exception '방장만 라운드를 시작할 수 있습니다.';
   end if;
 
-  for v_hand in select * from jsonb_array_elements(p_hands)
-  loop
-    insert into public.player_hands (room_id, player_id, cards, updated_at)
-    values (p_room_id, (v_hand->>'player_id')::uuid, v_hand->'cards', now())
-    on conflict (room_id, player_id)
-    do update set cards = excluded.cards, updated_at = now();
-  end loop;
+  v_max_number := public.max_number_for_player_count(v_player_count);
+  if v_max_number is null then
+    raise exception '지원하지 않는 인원수입니다: %', v_player_count;
+  end if;
+
+  select count(*) into v_seated_count from public.room_players where room_id = p_room_id;
+  if v_seated_count != v_player_count then
+    raise exception '착석 인원(%)이 설정된 인원수(%)와 다릅니다.', v_seated_count, v_player_count;
+  end if;
+
+  -- 좌석 순서대로 참가자에게 순번을 매기고, 완전히 셔플된 덱을 라운드로빈으로 나눠준다.
+  with seated as (
+    select player_id, row_number() over (order by seat_no) - 1 as idx
+    from public.room_players
+    where room_id = p_room_id
+  ),
+  deck as (
+    select n as number, s as suit, row_number() over (order by random()) - 1 as rn
+    from generate_series(1, v_max_number) as n
+    cross join generate_series(0, 3) as s
+  ),
+  dealt_hands as (
+    select mod(deck.rn, v_player_count) as idx,
+           jsonb_agg(jsonb_build_object('number', deck.number, 'suit', deck.suit)) as cards
+    from deck
+    group by mod(deck.rn, v_player_count)
+  )
+  insert into public.player_hands (room_id, player_id, cards, updated_at)
+  select p_room_id, seated.player_id, dealt_hands.cards, now()
+  from seated
+  join dealt_hands on dealt_hands.idx = seated.idx
+  on conflict (room_id, player_id)
+  do update set cards = excluded.cards, updated_at = now();
+
+  -- 3구름(숫자 3, suit=0="구름")을 가진 사람의 좌석을 선으로 지정 — 전판 승자와 무관하게 매 라운드 동일하게 적용
+  select rp.seat_no into v_starter_seat
+  from public.player_hands ph
+  join public.room_players rp on rp.player_id = ph.player_id and rp.room_id = ph.room_id
+  where ph.room_id = p_room_id
+    and exists (
+      select 1 from jsonb_array_elements(ph.cards) c
+      where (c->>'number')::int = 3 and (c->>'suit')::int = 0
+    );
+
+  if v_starter_seat is null then
+    raise exception '3구름을 가진 참가자를 찾지 못했습니다.';
+  end if;
 
   insert into public.game_table_state
     (room_id, round_number, current_combo, current_combo_player_id, current_turn_seat, passed_seats, turn_deadline, round_winner_id, paused_by, advance_requested, updated_at)
   values
-    (p_room_id, p_round_number, null, null, p_starter_seat, '{}', now() + (p_turn_seconds || ' seconds')::interval, null, null, false, now())
+    (p_room_id, p_round_number, null, null, v_starter_seat, '{}', now() + (p_turn_seconds || ' seconds')::interval, null, null, false, now())
   on conflict (room_id)
   do update set
     round_number = excluded.round_number,
@@ -415,6 +697,7 @@ returns void as $$
 declare
   v_seat int;
   v_player_count int;
+  v_max_number int;
   v_current_seat int;
   v_current_combo jsonb;
   v_round_number int;
@@ -422,6 +705,8 @@ declare
   v_new_hand jsonb;
   v_turn_limit int;
   v_next_seat int;
+  v_new_eval record;
+  v_current_eval record;
 begin
   select seat_no into v_seat from public.room_players
   where room_id = p_room_id and player_id = auth.uid();
@@ -438,6 +723,24 @@ begin
 
   if v_current_combo is not null and jsonb_array_length(v_current_combo) != jsonb_array_length(p_cards) then
     raise exception '이전에 나온 조합과 같은 장수를 내야 합니다.';
+  end if;
+
+  select player_count into v_player_count from public.rooms where id = p_room_id;
+  v_max_number := public.max_number_for_player_count(v_player_count);
+
+  -- 제출한 카드 묶음 자체가 유효한 조합(싱글/페어/트리플/5장 조합)인지 서버가 직접 검증
+  select * into v_new_eval from public.evaluate_combo(p_cards, v_max_number);
+  if not found then
+    raise exception '유효하지 않은 카드 조합입니다.';
+  end if;
+
+  -- 바닥에 이미 나온 조합이 있다면, 이번에 낸 조합이 그보다 강한지도 서버가 직접 검증
+  if v_current_combo is not null then
+    select * into v_current_eval from public.evaluate_combo(v_current_combo, v_max_number);
+    if v_new_eval.primary_rank < v_current_eval.primary_rank
+       or (v_new_eval.primary_rank = v_current_eval.primary_rank and v_new_eval.secondary_rank <= v_current_eval.secondary_rank) then
+      raise exception '이전 패보다 강한 조합을 내야 합니다.';
+    end if;
   end if;
 
   select cards into v_hand from public.player_hands
@@ -493,6 +796,7 @@ declare
   v_host_id uuid;
   v_seat int;
   v_player_count int;
+  v_max_number int;
   v_current_seat int;
   v_current_combo jsonb;
   v_round_number int;
@@ -500,6 +804,8 @@ declare
   v_new_hand jsonb;
   v_turn_limit int;
   v_next_seat int;
+  v_new_eval record;
+  v_current_eval record;
 begin
   select host_id into v_host_id from public.rooms where id = p_room_id;
   if auth.uid() != v_host_id then raise exception '방장만 봇을 대신 조작할 수 있습니다.'; end if;
@@ -515,6 +821,22 @@ begin
   if v_current_seat is null or v_current_seat != v_seat then raise exception '지금은 봇의 차례가 아닙니다.'; end if;
   if v_current_combo is not null and jsonb_array_length(v_current_combo) != jsonb_array_length(p_cards) then
     raise exception '이전에 나온 조합과 같은 장수를 내야 합니다.';
+  end if;
+
+  select player_count into v_player_count from public.rooms where id = p_room_id;
+  v_max_number := public.max_number_for_player_count(v_player_count);
+
+  select * into v_new_eval from public.evaluate_combo(p_cards, v_max_number);
+  if not found then
+    raise exception '유효하지 않은 카드 조합입니다.';
+  end if;
+
+  if v_current_combo is not null then
+    select * into v_current_eval from public.evaluate_combo(v_current_combo, v_max_number);
+    if v_new_eval.primary_rank < v_current_eval.primary_rank
+       or (v_new_eval.primary_rank = v_current_eval.primary_rank and v_new_eval.secondary_rank <= v_current_eval.secondary_rank) then
+      raise exception '이전 패보다 강한 조합을 내야 합니다.';
+    end if;
   end if;
 
   select cards into v_hand from public.player_hands where room_id = p_room_id and player_id = p_bot_id;
@@ -753,7 +1075,61 @@ begin
 end;
 $$ language plpgsql security definer;
 
--- 각 참가자의 "남은 패 개수"만 알려줌 (실제 카드 내용은 절대 노출 안 됨 — 전략적으로 꼭 필요한 정보)
+-- 매치 정상 종료(목표 점수 달성)를 서버가 직접 확정한다.
+-- 클라이언트가 games/game_results에 직접 insert하던 방식은 아무 점수나 조작해 넣을 수 있어서 폐기.
+create or replace function public.finalize_match(p_room_id uuid, p_player_count int)
+returns uuid as $$
+declare
+  v_host_id uuid;
+  v_target_score int;
+  v_has_bot boolean;
+  v_game_id uuid;
+  v_top_score int;
+  v_rank int := 1;
+  v_row record;
+begin
+  select host_id, target_score into v_host_id, v_target_score
+  from public.rooms where id = p_room_id;
+
+  if auth.uid() != v_host_id then
+    raise exception '방장만 매치를 종료할 수 있습니다.';
+  end if;
+
+  -- 실제로 match_scores 상에 목표 점수 도달자가 있는지 서버가 직접 확인
+  select max(score) into v_top_score from public.match_scores where room_id = p_room_id;
+  if v_top_score is null or v_top_score < v_target_score then
+    raise exception '아직 목표 점수에 도달한 사람이 없습니다.';
+  end if;
+
+  select exists (
+    select 1 from public.room_players rp
+    join public.profiles pr on pr.id = rp.player_id
+    where rp.room_id = p_room_id and pr.is_bot
+  ) into v_has_bot;
+
+  if not v_has_bot then
+    insert into public.games (room_id, player_count)
+    values (p_room_id, p_player_count)
+    returning id into v_game_id;
+
+    for v_row in
+      select player_id, score from public.match_scores
+      where room_id = p_room_id
+      order by score desc
+    loop
+      insert into public.game_results (game_id, player_id, rank, score)
+      values (v_game_id, v_row.player_id, v_rank, v_row.score);
+      v_rank := v_rank + 1;
+    end loop;
+  end if;
+
+  delete from public.match_scores where room_id = p_room_id;
+  delete from public.play_log where room_id = p_room_id;
+  update public.rooms set status = 'waiting' where id = p_room_id;
+
+  return v_game_id;
+end;
+$$ language plpgsql security definer; (실제 카드 내용은 절대 노출 안 됨 — 전략적으로 꼭 필요한 정보)
 create function public.get_hand_counts(p_room_id uuid)
 returns table(player_id uuid, card_count int) as $$
 begin
@@ -850,16 +1226,14 @@ create policy "users can join rooms as themselves"
 create policy "users can leave rooms as themselves"
   on public.room_players for delete using (auth.uid() = player_id);
 
--- 게임 기록: 조회는 누구나(리더보드용), 기록 insert는 서버(서비스 롤)에서만
+-- 게임 기록: 조회는 누구나(리더보드용). 기록 insert는 클라이언트에게 절대 열지 않고
+-- finalize_match() / quit_match_with_penalty() SECURITY DEFINER 함수를 통해서만 서버가 직접 기록한다.
+-- (예전엔 "authenticated면 누구나 insert 가능" 정책이 있었는데, 그러면 아무나 리더보드에
+--  임의의 점수/순위를 꽂아 넣을 수 있어서 완전히 제거함)
 create policy "games viewable by everyone"
   on public.games for select using (true);
 create policy "game_results viewable by everyone"
   on public.game_results for select using (true);
--- 매치 종료 기록은 방장(또는 중도 포기자) 클라이언트가 직접 insert 함 — 소규모 친구용이라 단순하게 허용
-create policy "authenticated users can record match results"
-  on public.games for insert with check (auth.role() = 'authenticated');
-create policy "authenticated users can record match result rows"
-  on public.game_results for insert with check (auth.role() = 'authenticated');
 
 -- 채팅: 로그인한 사용자면 전체 조회 가능, 자기 자신 이름으로만 작성 가능
 alter table public.messages enable row level security;

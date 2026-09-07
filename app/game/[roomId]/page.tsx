@@ -25,7 +25,7 @@ import {
 } from "@/lib/gameApi";
 import { evaluateCombo, canBeat, type Card, type PlayerCount, type HandEval } from "@/lib/lexioEngine";
 import { computeRoundScores, type RoundHandResult } from "@/lib/roundScoring";
-import { applyRoundScores, useMatchScores, findMatchWinner } from "@/lib/matchScoring";
+import { finalizeRoundScores, useMatchScores, findMatchWinner } from "@/lib/matchScoring";
 import { finalizeMatch } from "@/lib/matchScoring";
 import { chooseBotMove, type BotDifficulty } from "@/lib/botAI";
 import { isComboUnbeatable } from "@/lib/reachability";
@@ -72,8 +72,10 @@ export default function GamePage() {
   const [hasUnreadChat, setHasUnreadChat] = useState(false);
   const [quitting, setQuitting] = useState(false);
   const [chatToast, setChatToast] = useState<{ playerId: string; content: string } | null>(null);
+  const [roundStartAnnounce, setRoundStartAnnounce] = useState<string | null>(null);
 
   const chatInitializedRef = useRef(false);
+  const announcedRoundRef = useRef<number | null>(null);
   const lastChatMessageIdRef = useRef<string | null>(null);
   const { messages: chatMessages } = useChat(roomId);
 
@@ -189,6 +191,20 @@ export default function GamePage() {
     playShuffleSound();
   }, [tableState?.round_number]);
 
+  // ---------- 새 라운드 시작 알림: "OO님이 3구름 소지자입니다. 첫턴은 OO님입니다." ----------
+  useEffect(() => {
+    if (!tableState?.round_number || seated.length === 0) return;
+    if (announcedRoundRef.current === tableState.round_number) return; // 같은 라운드에서 중복 방지(재접속 등)
+    announcedRoundRef.current = tableState.round_number;
+
+    const starter = seated.find((s) => s.seat_no === tableState.current_turn_seat);
+    if (!starter) return;
+
+    setRoundStartAnnounce(starter.nickname);
+    const timer = setTimeout(() => setRoundStartAnnounce(null), 3500);
+    return () => clearTimeout(timer);
+  }, [tableState?.round_number, tableState?.current_turn_seat, seated]);
+
   useEffect(() => {
     if (!tableState) return;
     if (
@@ -229,10 +245,12 @@ export default function GamePage() {
       playerId: r.player_id,
       remainingCards: r.cards,
     }));
-    const deltas = computeRoundScores(handResults, applyTwoWeight);
+    // 화면에 바로 보여줄 미리보기 값 (서버 응답 오기 전까지의 임시 표시용).
+    // 실제로 반영/저장되는 값은 항상 서버(finalize_round RPC)가 재계산한 값이다.
+    const previewDeltas = computeRoundScores(handResults, applyTwoWeight);
 
     setRoundResult(
-      deltas.map((d) => {
+      previewDeltas.map((d) => {
         const nickname = seated.find((s) => s.player_id === d.playerId)?.nickname ?? "?";
         const remaining = handResults.find((h) => h.playerId === d.playerId)?.remainingCards.length ?? 0;
         return { nickname, remaining, delta: d.delta };
@@ -242,9 +260,15 @@ export default function GamePage() {
     // 점수 반영 + 다음 진행은 방장 클라이언트만 수행 (중복 반영 방지)
     if (myId && myId === hostId && !finalizingRef.current) {
       finalizingRef.current = true;
-      await applyRoundScores(
-        roomId,
-        deltas.map((d) => ({ playerId: d.playerId, delta: d.delta }))
+      // 서버가 player_hands를 직접 읽어 재계산한 델타 — 이 값이 실제로 반영된 값이므로
+      // 화면 표시도 이 값으로 다시 맞춰준다 (미리보기와 다를 일은 없어야 하지만, 안전하게).
+      const serverDeltas = await finalizeRoundScores(roomId);
+      setRoundResult(
+        serverDeltas.map((d) => {
+          const nickname = seated.find((s) => s.player_id === d.playerId)?.nickname ?? "?";
+          const remaining = handResults.find((h) => h.playerId === d.playerId)?.remainingCards.length ?? 0;
+          return { nickname, remaining, delta: d.delta };
+        })
       );
 
       // 최신 누적 점수를 다시 조회해서 목표 도달 여부 확인
@@ -266,18 +290,11 @@ export default function GamePage() {
         if (proceeded) return;
         proceeded = true;
         if (winner) {
-          await finalizeMatch(roomId, playerCount!, scoreRows);
+          await finalizeMatch(roomId, playerCount!);
           // rooms.status 가 waiting 으로 바뀌는 걸 실시간으로 감지해서 방 화면으로 돌아감
         } else {
-          const winnerSeat = seated.find((s) => s.player_id === tableState!.round_winner_id)?.seat_no ?? 0;
-          await startNewRound(
-            roomId,
-            playerCount!,
-            seated.map((s) => ({ seat_no: s.seat_no, player_id: s.player_id })),
-            winnerSeat,
-            (tableState?.round_number ?? 1) + 1,
-            turnTimeLimit
-          );
+          // 다음 라운드 선(先)은 서버(start_round RPC)가 3구름 소지자를 직접 찾아서 정한다.
+          await startNewRound(roomId, (tableState?.round_number ?? 1) + 1, turnTimeLimit);
         }
         finalizingRef.current = false;
         pendingAdvanceRef.current = null;
@@ -562,6 +579,33 @@ export default function GamePage() {
               : null
           }
         />
+
+        {roundStartAnnounce && (
+          <div
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              background: "rgba(20,20,24,0.92)",
+              border: "1px solid #f2c14e",
+              borderRadius: 14,
+              padding: "18px 26px",
+              textAlign: "center",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+              zIndex: 20,
+              pointerEvents: "none",
+            }}
+          >
+            <div style={{ fontSize: 15, color: "#fff", marginBottom: 4 }}>
+              <strong style={{ color: "#f2c14e" }}>{roundStartAnnounce}</strong>님이 3구름
+              소지자입니다.
+            </div>
+            <div style={{ fontSize: 15, color: "#fff" }}>
+              첫턴은 <strong style={{ color: "#f2c14e" }}>{roundStartAnnounce}</strong>님입니다.
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 위쪽 게임판과 내 손패 구역을 확실히 나누는 경계선 + 안내원 말풍선 */}
